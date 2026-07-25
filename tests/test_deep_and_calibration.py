@@ -305,3 +305,101 @@ class TestExplain:
         model.fit(synthetic_bundle.X, synthetic_bundle.y)
         with pytest.raises(ValueError, match="no CSP step"):
             csp_patterns(model, card, output=tmp_path / "x.png")
+
+
+class TestBNCI2aEpoching:
+    """Exercise the BCI IV-2a loader against a mocked MOABB.
+
+    The real corpus is a ~770 MB download from a host that serves at roughly
+    27 kB/s, so the integration is verified here against synthetic raws with the
+    same structure MOABB returns: a dict of sessions, each a dict of runs, each
+    an annotated `Raw` at 250 Hz with the four imagery labels.
+    """
+
+    def _fake_raw(self, n_trials=8, sfreq=250.0, seed=0):
+        import mne
+
+        rng = np.random.default_rng(seed)
+        names = [f"EEG-{i}" for i in range(22)]
+        duration = n_trials * 8.0
+        data = rng.standard_normal((22, int(duration * sfreq))) * 1e-5
+        info = mne.create_info(names, sfreq, ch_types="eeg")
+        raw = mne.io.RawArray(data, info, verbose="ERROR")
+
+        labels = ["left_hand", "right_hand", "feet", "tongue"]
+        onsets = [2.0 + 8.0 * i for i in range(n_trials)]
+        raw.set_annotations(
+            mne.Annotations(onsets, [4.0] * n_trials,
+                            [labels[i % 4] for i in range(n_trials)]),
+            verbose="ERROR",
+        )
+        return raw
+
+    def _dataset(self, monkeypatch, n_sessions=2):
+        from bwt.data.datasets import BNCI2a
+
+        dataset = BNCI2a()
+        sessions = {
+            f"session_{s}": {f"run_{r}": self._fake_raw(seed=s * 10 + r)
+                             for r in range(2)}
+            for s in range(n_sessions)
+        }
+
+        class _Fake:
+            subject_list = [1, 2]
+
+            def get_data(self, subjects):
+                return {subjects[0]: sessions}
+
+        monkeypatch.setattr(dataset, "_moabb", lambda: _Fake())
+        return dataset
+
+    def test_two_class_task_keeps_only_hand_trials(self, monkeypatch):
+        dataset = self._dataset(monkeypatch)
+        bundle = dataset.load_subject(1, "mi_left_right", 0.5, 3.5)
+        assert bundle is not None
+        assert bundle.classes == ("left_hand", "right_hand")
+        assert set(np.unique(bundle.y)) == {0, 1}
+        # 8 trials/run x 2 runs x 2 sessions = 32, half of which are hands.
+        assert bundle.n_trials == 16
+
+    def test_four_class_task_keeps_everything(self, monkeypatch):
+        dataset = self._dataset(monkeypatch)
+        bundle = dataset.load_subject(1, "mi_four_class", 0.5, 3.5)
+        assert bundle.n_trials == 32
+        assert set(np.unique(bundle.y)) == {0, 1, 2, 3}
+
+    def test_native_sampling_rate_and_shape(self, monkeypatch):
+        dataset = self._dataset(monkeypatch)
+        bundle = dataset.load_subject(1, "mi_four_class", 0.5, 3.5)
+        assert bundle.sfreq == 250.0
+        assert bundle.n_channels == 22
+        # 3 s at 250 Hz, inclusive of both endpoints.
+        assert bundle.n_times == 751
+
+    def test_session_identity_is_preserved(self, monkeypatch):
+        """Needed for a train-on-day-one, test-on-day-two evaluation."""
+        dataset = self._dataset(monkeypatch)
+        bundle = dataset.load_subject(1, "mi_four_class", 0.5, 3.5)
+        assert set(np.unique(bundle.runs)) == {0, 1}
+
+    def test_subject_id_is_attached(self, monkeypatch):
+        dataset = self._dataset(monkeypatch)
+        bundle = dataset.load_subject(2, "mi_four_class", 0.5, 3.5)
+        assert set(np.unique(bundle.groups)) == {2}
+
+    def test_wrong_sampling_rate_is_rejected(self, monkeypatch):
+        from bwt.data.datasets import BNCI2a
+
+        dataset = BNCI2a()
+        bad = {"session_0": {"run_0": self._fake_raw(sfreq=160.0)}}
+
+        class _Fake:
+            subject_list = [1]
+
+            def get_data(self, subjects):
+                return {subjects[0]: bad}
+
+        monkeypatch.setattr(dataset, "_moabb", lambda: _Fake())
+        with pytest.raises(ValueError, match="250"):
+            dataset.load_subject(1, "mi_four_class", 0.5, 3.5)
