@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Brainwave-to-Text{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}" />
+</head>
+<body>
+  <div class="backdrop" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <div class="wrap">
+      <a class="brand" href="{{ url_for('index') }}">
+        <span class="brand-mark">◍</span>
+        <span>Brainwave&#8202;&rarr;&#8202;Text</span>
+      </a>
+      {% if model %}
+      <div class="topbar-meta">
+        <span class="pill">{{ model.task }}</span>
+        <span class="pill pill-quiet">{{ model.pipeline }}</span>
+      </div>
+      {% endif %}
+    </div>
+  </header>
+
+  <main class="wrap">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="wrap footer">
+    <p>
+      This system classifies <strong>imagined movement</strong> from scalp EEG and
+      uses the decoded commands to drive a spelling interface. It does not read
+      words, inner speech, or intent from the brain &mdash; no scalp-EEG method can.
+    </p>
+    <p class="muted">
+      Data: PhysioNet EEG Motor Movement/Imagery Database.
+      Research and educational use only; not a medical device.
+    </p>
+  </footer>
+</body>
+</html>

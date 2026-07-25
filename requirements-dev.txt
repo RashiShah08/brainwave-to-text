@@ -1,0 +1,8 @@
+-r requirements.txt
+
+pytest==9.1.1
+pytest-cov==7.1.0
+
+# Needed only by the test suite, to write synthetic EDF files so the unit tests
+# exercise the real MNE reader path without requiring the 3.5 GB dataset.
+edfio==0.4.14

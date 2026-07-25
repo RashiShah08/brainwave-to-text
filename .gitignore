@@ -1,0 +1,35 @@
+# Environments
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.coverage
+htmlcov/
+.ipynb_checkpoints/
+
+# Raw dataset — 3.5 GB, fetch with `bwt fetch-data` instead of committing
+raw_data/
+
+# Derived artifacts — reproducible from raw data, never commit
+cache/
+artifacts/
+reports/
+uploads/
+
+# Superseded outputs from the v1 pipeline (kept on disk, not in git)
+processed_data/
+models/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/

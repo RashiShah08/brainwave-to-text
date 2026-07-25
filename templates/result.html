@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}Brainwave-to-Text &mdash; Result{% endblock %}
+
+{% block content %}
+
+{% if error %}
+  <h1>Could not decode that recording</h1>
+  <div class="notice notice-bad">
+    <strong>Rejected.</strong> {{ error }}
+  </div>
+  <p><a class="btn btn-ghost" href="{{ url_for('index') }}"
+        style="text-decoration:none">&larr; Try another file</a></p>
+
+{% else %}
+  <h1>Decoded</h1>
+
+  {% if batch.epoching == 'sliding_window' %}
+  <div class="notice notice-warn">
+    <strong>No cue markers in this file.</strong> It was split into fixed
+    consecutive windows, so each row below is an unaligned guess rather than a
+    decoded trial. Accuracy figures on this page do not apply to this mode.
+  </div>
+  {% endif %}
+
+  {% for w in batch.warnings %}
+    {% if batch.epoching != 'sliding_window' or not loop.first %}
+    <div class="notice notice-warn">{{ w }}</div>
+    {% endif %}
+  {% endfor %}
+
+  <div class="card">
+    <h2>Spelled text</h2>
+    <div class="decoded">
+      {%- if batch.text %}{{ batch.text }}
+      {%- else %}<span class="empty">
+        No character completed. This decoder needs
+        {{ batch.speller.trials_per_character if batch.speller else '?' }}
+        consecutive trials to commit one character, and this recording supplied
+        {{ batch.n }}.
+      </span>{% endif -%}
+    </div>
+    {% if batch.speller %}
+    <p class="muted mt" style="font-size:0.85rem; margin-bottom:0">
+      {{ batch.speller.n_trials_consumed }} trials consumed &middot;
+      {{ batch.speller.trials_per_character }} trials per character &middot;
+      {% if batch.speller.partial_candidates %}
+        {{ batch.speller.partial_candidates | length }} candidates still in play
+        ({{ batch.speller.partial_candidates[:8] | join(' ') }}{% if batch.speller.partial_candidates | length > 8 %} &hellip;{% endif %})
+      {% else %}character boundary reached cleanly{% endif %}
+    </p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Summary</h2>
+    <div class="metrics">
+      <div class="metric">
+        <div class="label">Epochs decoded</div>
+        <div class="value">{{ batch.n }}</div>
+        <div class="sub">{{ batch.epoching.replace('_', ' ') }}</div>
+      </div>
+      <div class="metric">
+        <div class="label">Majority class</div>
+        <div class="value accent" style="font-size:1.1rem">
+          {{ batch.majority_label() or '&mdash;' }}
+        </div>
+        <div class="sub">most frequent prediction</div>
+      </div>
+      <div class="metric">
+        <div class="label">Mean confidence</div>
+        <div class="value">{{ '%.1f' % (batch.mean_confidence() * 100) }}%</div>
+        <div class="sub">chance = {{ '%.0f' % (100 / (batch.classes | length)) }}%</div>
+      </div>
+      <div class="metric">
+        <div class="label">Model accuracy</div>
+        <div class="value">
+          {% if performance and performance.within_subject_accuracy is not none %}
+            {{ '%.1f' % (performance.within_subject_accuracy * 100) }}%
+          {% else %}&mdash;{% endif %}
+        </div>
+        <div class="sub">within-subject, measured</div>
+      </div>
+    </div>
+    <div class="notice mt">
+      Confidence is the model's probability for the chosen class on that trial.
+      It is not a measure of whether the answer is right &mdash; at
+      {% if performance and performance.within_subject_accuracy is not none %}
+        {{ '%.0f' % (performance.within_subject_accuracy * 100) }}%
+      {% else %}the measured{% endif %}
+      accuracy, a confident prediction is still frequently wrong.
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Per-trial predictions</h2>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th class="num">#</th>
+            {% if batch.predictions and batch.predictions[0].onset_seconds is not none %}
+            <th class="num">Onset</th>
+            {% endif %}
+            <th>Predicted</th>
+            <th class="num">Confidence</th>
+            <th style="width:35%">Distribution</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for p in batch.predictions[:200] %}
+          <tr>
+            <td class="num">{{ p.index }}</td>
+            {% if p.onset_seconds is not none %}
+            <td class="num">{{ '%.2f' % p.onset_seconds }}s</td>
+            {% endif %}
+            <td class="mono">{{ p.label }}</td>
+            <td class="num">{{ '%.3f' % p.confidence }}</td>
+            <td>
+              <div class="bar" title="{{ p.probabilities }}">
+                <span style="width: {{ '%.1f' % (p.confidence * 100) }}%"></span>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if batch.n > 200 %}
+    <p class="muted" style="font-size:0.85rem">
+      Showing the first 200 of {{ batch.n }} epochs.
+    </p>
+    {% endif %}
+  </div>
+
+  <p><a class="btn btn-ghost" href="{{ url_for('index') }}"
+        style="text-decoration:none">&larr; Decode another file</a></p>
+{% endif %}
+
+{% endblock %}

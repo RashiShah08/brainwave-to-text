@@ -1,0 +1,40 @@
+# Default configuration. Every value here is also the code default, so this
+# file is documentation as much as configuration. Override any field with an
+# environment variable, e.g. BWT_SERVE_PORT=8080 or BWT_DATA_TASK=mi_four_class.
+
+data:
+  # One of: mi_left_right, me_left_right, mi_fists_feet, mi_four_class,
+  #         mi_left_right_rest   (see bwt.data.physionet.TASKS)
+  task: mi_left_right
+  # Analysis window relative to cue onset, in seconds. Trials are 4.1 s long;
+  # the first 0.5 s is skipped because it is dominated by the visual response
+  # to the cue rather than by motor imagery.
+  tmin: 0.5
+  tmax: 3.5
+  n_jobs: 4
+  use_cache: true
+
+train:
+  # One of: riemann_ts, riemann_ts_aligned, csp_lda, fbcsp_lda,
+  #         fb_riemann_ts, bandpower_rf   (see bwt.pipelines.REGISTRY)
+  #
+  # csp_lda is the default because a shipped model is applied to people it was
+  # not trained on, and it is the best cross-subject performer. Prefer
+  # riemann_ts_aligned when calibrating per user.
+  pipeline: csp_lda
+  random_state: 42
+  cv_splits: 5
+  protocols: [within_subject, cross_subject]
+  # Permutation test iterations. Slow (each one is a full cross-validation),
+  # so it is off by default; `bwt evaluate --permutations 100` turns it on.
+  permutations: 0
+
+serve:
+  host: 127.0.0.1
+  port: 5000
+  max_upload_mb: 64
+  # Artifact directory name under artifacts/, or null for the most recent.
+  model: null
+  max_epochs_per_request: 256
+  # Refuse to load a model trained against different library versions.
+  strict_versions: false
