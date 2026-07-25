@@ -1,0 +1,322 @@
+{% extends "base.html" %}
+{% block title %}Brainwave-to-Text &mdash; Live decoder{% endblock %}
+
+{% block content %}
+<h1>Live decoder</h1>
+<p class="lede">
+  Replays a recording at its original speed through a sliding-window decoder.
+  Each window contributes evidence; a letter is only committed once one class
+  becomes decisive. This is what makes a modest per-window accuracy usable.
+</p>
+
+<div class="card">
+  <h2>Source</h2>
+  <form id="form">
+    <label class="dropzone" id="zone" for="file">
+      <div><strong>Choose an .edf file</strong> or drop it here</div>
+      <div class="muted" style="font-size:0.85rem">
+        {{ model.n_channels }} channels &middot; {{ '%g' % model.sfreq }} Hz
+      </div>
+      <div class="filename" id="filename"></div>
+      <input type="file" id="file" accept=".edf" />
+    </label>
+
+    <div class="controls mt">
+      <label>Replay speed
+        <select id="speed">
+          <option value="0">As fast as possible</option>
+          <option value="1">1&times; (real time)</option>
+          <option value="4" selected>4&times;</option>
+          <option value="10">10&times;</option>
+        </select>
+      </label>
+      <label>Window step
+        <select id="step">
+          <option value="0.25">0.25 s</option>
+          <option value="0.5" selected>0.5 s</option>
+          <option value="1.0">1.0 s</option>
+        </select>
+      </label>
+      <label>Commit threshold
+        <select id="threshold">
+          <option value="0.75">0.75 (fast)</option>
+          <option value="0.9" selected>0.90 (balanced)</option>
+          <option value="0.99">0.99 (careful)</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="row mt">
+      <button class="btn" id="start" type="submit" disabled>Start decoding</button>
+      <button class="btn btn-ghost" id="stop" type="button" disabled>Stop</button>
+      <span class="muted" id="status" style="font-size:0.85rem">Idle</span>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Spelled text</h2>
+  <div class="decoded" id="text"><span class="empty">Nothing committed yet.</span></div>
+  <div class="candidates mt" id="candidates"></div>
+</div>
+
+<div class="card">
+  <h2>Evidence</h2>
+  <p class="muted" style="margin-top:0;font-size:0.88rem">
+    Live posterior over classes. A decision fires when a bar crosses the
+    threshold; the accumulator then resets for the next selection.
+  </p>
+  <div id="bars"></div>
+  <div class="metrics mt">
+    <div class="metric">
+      <div class="label">Windows seen</div>
+      <div class="value" id="m-windows">0</div>
+      <div class="sub">since last decision</div>
+    </div>
+    <div class="metric">
+      <div class="label">Decisions</div>
+      <div class="value accent" id="m-decisions">0</div>
+      <div class="sub" id="m-timeouts">0 timed out</div>
+    </div>
+    <div class="metric">
+      <div class="label">Mean windows</div>
+      <div class="value" id="m-mean">&mdash;</div>
+      <div class="sub">per committed decision</div>
+    </div>
+    <div class="metric">
+      <div class="label">Stream position</div>
+      <div class="value" id="m-time">0.0s</div>
+      <div class="sub" id="m-progress">of recording</div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Decision log</h2>
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th class="num">#</th><th class="num">At</th><th>Committed</th>
+          <th class="num">Confidence</th><th class="num">Windows</th><th>Emitted</th>
+        </tr>
+      </thead>
+      <tbody id="log"><tr><td colspan="6" class="muted">No decisions yet.</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<style>
+  .controls { display: flex; gap: 1.25rem; flex-wrap: wrap; }
+  .controls label { font-size: 0.85rem; color: var(--muted);
+                    display: flex; flex-direction: column; gap: 0.3rem; }
+  .controls select {
+    background: var(--surface-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 0.4rem 0.6rem; font-family: inherit; font-size: 0.9rem;
+  }
+  .ebar { margin: 0.55rem 0; }
+  .ebar-head { display: flex; justify-content: space-between;
+               font-size: 0.85rem; margin-bottom: 0.25rem; }
+  .ebar-head .name { font-family: var(--mono); }
+  .ebar-track { position: relative; height: 12px; border-radius: 6px;
+                background: rgba(255,255,255,0.08); overflow: hidden; }
+  .ebar-fill { position: absolute; inset: 0 auto 0 0; width: 0;
+               background: linear-gradient(90deg, var(--accent), var(--accent-2));
+               transition: width 0.12s linear; }
+  .ebar-thresh { position: absolute; top: -3px; bottom: -3px; width: 2px;
+                 background: var(--warn); opacity: 0.85; }
+  .candidates { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+  .cand { font-family: var(--mono); font-size: 0.8rem; padding: 0.15rem 0.5rem;
+          border: 1px solid var(--border); border-radius: 6px;
+          background: var(--surface-2); color: var(--muted); }
+  .flash { animation: flash 0.5s ease; }
+  @keyframes flash { 0% { background: rgba(94,234,212,0.35); } 100% { background: transparent; } }
+</style>
+
+<script>
+(function () {
+  var els = {
+    file: document.getElementById('file'),
+    zone: document.getElementById('zone'),
+    filename: document.getElementById('filename'),
+    form: document.getElementById('form'),
+    start: document.getElementById('start'),
+    stop: document.getElementById('stop'),
+    status: document.getElementById('status'),
+    text: document.getElementById('text'),
+    candidates: document.getElementById('candidates'),
+    bars: document.getElementById('bars'),
+    log: document.getElementById('log'),
+  };
+  var controller = null;
+  var state = { decisions: 0, timeouts: 0, windowSum: 0, total: 0 };
+
+  function show(f) {
+    if (!f) { els.filename.textContent = ''; els.start.disabled = true; return; }
+    els.filename.textContent = f.name + '  (' + (f.size / 1048576).toFixed(1) + ' MB)';
+    els.start.disabled = false;
+  }
+  els.file.addEventListener('change', function () { show(els.file.files[0]); });
+  ['dragenter', 'dragover'].forEach(function (e) {
+    els.zone.addEventListener(e, function (ev) { ev.preventDefault(); els.zone.classList.add('hot'); });
+  });
+  ['dragleave', 'drop'].forEach(function (e) {
+    els.zone.addEventListener(e, function (ev) { ev.preventDefault(); els.zone.classList.remove('hot'); });
+  });
+  els.zone.addEventListener('drop', function (ev) {
+    if (ev.dataTransfer.files.length) { els.file.files = ev.dataTransfer.files; show(els.file.files[0]); }
+  });
+
+  function buildBars(classes, threshold) {
+    els.bars.innerHTML = '';
+    classes.forEach(function (c) {
+      var wrap = document.createElement('div');
+      wrap.className = 'ebar';
+      wrap.innerHTML =
+        '<div class="ebar-head"><span class="name">' + c + '</span>' +
+        '<span class="val mono" data-for="' + c + '">0.00</span></div>' +
+        '<div class="ebar-track"><div class="ebar-fill" data-bar="' + c + '"></div>' +
+        '<div class="ebar-thresh" style="left:' + (threshold * 100) + '%"></div></div>';
+      els.bars.appendChild(wrap);
+    });
+  }
+
+  function setNum(id, v) { document.getElementById(id).textContent = v; }
+
+  function addLogRow(d, onset) {
+    if (state.decisions + state.timeouts === 1) els.log.innerHTML = '';
+    var tr = document.createElement('tr');
+    tr.className = 'flash';
+    var emitted = (d.speller && d.speller.steps.length)
+      ? (d.speller.steps[d.speller.steps.length - 1].emitted || '—') : '—';
+    tr.innerHTML =
+      '<td class="num">' + (state.decisions + state.timeouts) + '</td>' +
+      '<td class="num">' + onset.toFixed(1) + 's</td>' +
+      '<td class="mono">' + (d.label === null ? '<span class="muted">timed out</span>' : d.label) + '</td>' +
+      '<td class="num">' + d.confidence.toFixed(3) + '</td>' +
+      '<td class="num">' + d.n_windows + '</td>' +
+      '<td class="mono">' + emitted + '</td>';
+    els.log.insertBefore(tr, els.log.firstChild);
+  }
+
+  function handle(msg) {
+    if (msg.type === 'start') {
+      buildBars(msg.classes, parseFloat(document.getElementById('threshold').value));
+      document.getElementById('m-progress').textContent = 'of ' + msg.n_windows + ' windows';
+      state.total = msg.n_windows;
+      return;
+    }
+    if (msg.type === 'error') {
+      els.status.textContent = 'Error: ' + msg.message;
+      els.status.style.color = 'var(--bad)';
+      return;
+    }
+    if (msg.type === 'truncated') { els.status.textContent = msg.message; return; }
+    if (msg.type === 'end') {
+      els.status.textContent = 'Finished — ' + msg.n_windows + ' windows decoded';
+      finish();
+      return;
+    }
+
+    Object.keys(msg.posterior).forEach(function (c) {
+      var bar = els.bars.querySelector('[data-bar="' + CSS.escape(c) + '"]');
+      var val = els.bars.querySelector('[data-for="' + CSS.escape(c) + '"]');
+      if (bar) bar.style.width = (msg.posterior[c] * 100).toFixed(1) + '%';
+      if (val) val.textContent = msg.posterior[c].toFixed(2);
+    });
+    setNum('m-time', msg.onset_seconds.toFixed(1) + 's');
+
+    if (msg.decision) {
+      if (msg.decision.timed_out) state.timeouts += 1;
+      else { state.decisions += 1; state.windowSum += msg.decision.n_windows; }
+      setNum('m-decisions', state.decisions);
+      setNum('m-timeouts', state.timeouts + ' timed out');
+      setNum('m-mean', state.decisions ? (state.windowSum / state.decisions).toFixed(1) : '—');
+      setNum('m-windows', 0);
+      addLogRow(msg.decision, msg.onset_seconds);
+
+      if (msg.speller) {
+        els.text.textContent = msg.speller.text || '';
+        if (!msg.speller.text) {
+          els.text.innerHTML = '<span class="empty">Nothing committed yet.</span>';
+        }
+        els.candidates.innerHTML = '';
+        (msg.speller.partial_candidates || []).slice(0, 16).forEach(function (c) {
+          var s = document.createElement('span');
+          s.className = 'cand'; s.textContent = c;
+          els.candidates.appendChild(s);
+        });
+      }
+    } else {
+      setNum('m-windows', msg.n_windows_since || (parseInt(document.getElementById('m-windows').textContent, 10) + 1));
+    }
+  }
+
+  function finish() {
+    els.start.disabled = false;
+    els.stop.disabled = true;
+    controller = null;
+  }
+
+  els.stop.addEventListener('click', function () {
+    if (controller) controller.abort();
+    els.status.textContent = 'Stopped';
+    finish();
+  });
+
+  els.form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    if (!els.file.files.length) return;
+
+    state = { decisions: 0, timeouts: 0, windowSum: 0, total: 0 };
+    ['m-decisions', 'm-windows'].forEach(function (i) { setNum(i, 0); });
+    setNum('m-mean', '—');
+    els.log.innerHTML = '<tr><td colspan="6" class="muted">No decisions yet.</td></tr>';
+    els.text.innerHTML = '<span class="empty">Nothing committed yet.</span>';
+    els.candidates.innerHTML = '';
+    els.status.style.color = '';
+    els.status.textContent = 'Decoding…';
+    els.start.disabled = true;
+    els.stop.disabled = false;
+
+    var body = new FormData();
+    body.append('file', els.file.files[0]);
+    var qs = new URLSearchParams({
+      speed: document.getElementById('speed').value,
+      step: document.getElementById('step').value,
+      threshold: document.getElementById('threshold').value,
+    });
+
+    controller = new AbortController();
+    fetch('/api/v1/stream?' + qs.toString(), {
+      method: 'POST', body: body, signal: controller.signal,
+    }).then(function (response) {
+      var reader = response.body.getReader();
+      var decoder = new TextDecoder();
+      var buffer = '';
+      function pump() {
+        return reader.read().then(function (chunk) {
+          if (chunk.done) { finish(); return; }
+          buffer += decoder.decode(chunk.value, { stream: true });
+          var lines = buffer.split('\n');
+          buffer = lines.pop();
+          lines.forEach(function (line) {
+            if (!line.trim()) return;
+            try { handle(JSON.parse(line)); } catch (e) { /* partial line */ }
+          });
+          return pump();
+        });
+      }
+      return pump();
+    }).catch(function (err) {
+      if (err.name !== 'AbortError') {
+        els.status.textContent = 'Connection failed';
+        els.status.style.color = 'var(--bad)';
+      }
+      finish();
+    });
+  });
+})();
+</script>
+{% endblock %}

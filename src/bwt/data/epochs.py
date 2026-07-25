@@ -408,99 +408,6 @@ def load_subject_epochs(
     )
 
 
-def _cache_key(task: TaskSpec, subjects: Sequence[int], tmin: float, tmax: float) -> str:
-    payload = json.dumps(
-        {
-            "v": CACHE_VERSION,
-            "task": task.name,
-            "runs": list(task.runs),
-            "classes": list(task.classes),
-            "subjects": list(subjects),
-            "tmin": tmin,
-            "tmax": tmax,
-        },
-        sort_keys=True,
-    )
-    digest = hashlib.sha256(payload.encode()).hexdigest()[:12]
-    return f"{task.name}_{len(subjects)}subj_{digest}.npz"
-
-
-def load_bundle(
-    task: TaskSpec | str,
-    *,
-    subjects: Iterable[int] | None = None,
-    tmin: float = DEFAULT_TMIN,
-    tmax: float = DEFAULT_TMAX,
-    root: Path | None = None,
-    n_jobs: int = 1,
-    use_cache: bool = True,
-) -> EpochBundle:
-    """Load (and cache) the full epoch tensor for a task.
-
-    The cache key covers the task, the subject list, and the epoch window, so
-    changing any of them produces a different file rather than a stale hit.
-    """
-    if isinstance(task, str):
-        task = get_task(task)
-    root = root or raw_data_dir()
-
-    if subjects is None:
-        subjects = available_subjects(root, require_runs=task.runs)
-    subjects = sorted(int(s) for s in subjects)
-    if not subjects:
-        raise RuntimeError(
-            f"no subjects found under {root}. Expected directories S001..S109 "
-            "containing EDF files; run `bwt fetch-data` or set $BWT_RAW_DATA."
-        )
-
-    cache_path = cache_dir() / _cache_key(task, subjects, tmin, tmax)
-    if use_cache and cache_path.is_file():
-        try:
-            bundle = EpochBundle.load(cache_path)
-            log.info("loaded cached epochs: %s", bundle.summary())
-            return bundle
-        except Exception as exc:  # noqa: BLE001
-            log.warning("ignoring unreadable cache %s (%s)", cache_path.name, exc)
-
-    log.info(
-        "epoching task=%s runs=%s subjects=%d window=%.2f-%.2fs",
-        task.name, list(task.runs), len(subjects), tmin, tmax,
-    )
-
-    def _one(subject: int) -> EpochBundle | None:
-        return load_subject_epochs(
-            subject, task, tmin=tmin, tmax=tmax, root=root
-        )
-
-    if n_jobs == 1:
-        results = []
-        for index, subject in enumerate(subjects, start=1):
-            results.append(_one(subject))
-            if index % 10 == 0 or index == len(subjects):
-                log.info("  %d/%d subjects", index, len(subjects))
-    else:
-        from joblib import Parallel, delayed
-
-        results = Parallel(n_jobs=n_jobs, verbose=0)(
-            delayed(_one)(s) for s in subjects
-        )
-
-    dropped = [s for s, r in zip(subjects, results) if r is None]
-    if dropped:
-        log.warning(
-            "%d subject(s) contributed no usable trials: %s",
-            len(dropped), ", ".join(subject_id(s) for s in dropped),
-        )
-
-    bundle = concat_bundles([r for r in results if r is not None])
-    log.info("epoched %s", bundle.summary())
-
-    if use_cache:
-        bundle.save(cache_path)
-        log.info("cached to %s", cache_path.name)
-    return bundle
-
-
 __all__ = [
     "CACHE_VERSION",
     "DEFAULT_TMIN",
@@ -508,7 +415,6 @@ __all__ = [
     "EpochBundle",
     "concat_bundles",
     "epochs_from_raw",
-    "load_bundle",
     "load_subject_epochs",
     "read_standardised_raw",
 ]

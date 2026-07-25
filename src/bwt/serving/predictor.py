@@ -305,6 +305,31 @@ class Predictor:
 
         return batch
 
+    # -- streaming ---------------------------------------------------------- #
+
+    def stream_from_edf(self, path: Path, *, speed: float = 0.0,
+                        step_seconds: float = 0.5):
+        """Build a sliding-window stream over a recording, in the model's channel order."""
+        from bwt.data.epochs import read_standardised_raw
+        from bwt.streaming import EDFStream
+
+        raw = read_standardised_raw(Path(path))
+        picks = self._align_channels(raw.ch_names)
+        return EDFStream.from_edf(
+            Path(path), self.card, speed=speed, step_seconds=step_seconds,
+            picks=picks,
+        )
+
+    def streaming_decoder(self, *, threshold: float = 0.9,
+                          max_windows: int = 40, min_windows: int = 2,
+                          leak: float = 0.95):
+        from bwt.streaming import StreamingDecoder
+
+        return StreamingDecoder(
+            self, threshold=threshold, max_windows=max_windows,
+            min_windows=min_windows, leak=leak, speller=self.speller,
+        )
+
     # -- reporting --------------------------------------------------------- #
 
     def performance_note(self) -> dict:

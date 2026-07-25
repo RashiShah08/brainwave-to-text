@@ -15,12 +15,14 @@
         <span class="brand-mark">◍</span>
         <span>Brainwave&#8202;&rarr;&#8202;Text</span>
       </a>
-      {% if model %}
-      <div class="topbar-meta">
+      <nav class="topbar-meta">
+        <a class="navlink" href="{{ url_for('index') }}">Decode file</a>
+        <a class="navlink" href="{{ url_for('live') }}">Live</a>
+        {% if model %}
         <span class="pill">{{ model.task }}</span>
         <span class="pill pill-quiet">{{ model.pipeline }}</span>
-      </div>
-      {% endif %}
+        {% endif %}
+      </nav>
     </div>
   </header>
 

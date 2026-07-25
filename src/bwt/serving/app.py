@@ -22,7 +22,7 @@ import time
 import uuid
 from pathlib import Path
 
-from flask import Flask, g, jsonify, render_template, request
+from flask import Flask, current_app, g, jsonify, render_template, request
 from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 
 from bwt import __version__
@@ -173,12 +173,135 @@ def _register_routes(app: Flask) -> None:
             performance=predictor.performance_note(),
         )
 
+    # -- live streaming ------------------------------------------------------ #
 
-def _handle_upload(predictor: Predictor):
-    """Validate and consume the uploaded file, then predict.
+    @app.get("/live")
+    def live():
+        predictor = _predictor()
+        return render_template(
+            "live.html",
+            model=predictor.card,
+            performance=predictor.performance_note(),
+        )
 
-    The file is written to a private temp path -- never a path derived from the
-    client-supplied filename -- and always removed.
+    @app.post("/api/v1/stream")
+    def stream_api():
+        """Decode a recording window by window, streaming NDJSON as it goes.
+
+        One JSON object per line rather than a single response body, so the
+        browser can render each decoded window as it arrives. Newline-delimited
+        JSON is used in preference to server-sent events because the recording
+        arrives by POST and ``EventSource`` only issues GETs.
+        """
+        import json as _json
+
+        predictor = _predictor()
+        config = current_app.extensions["bwt_config"]
+
+        speed = request.args.get("speed", default=0.0, type=float)
+        step = request.args.get("step", default=0.5, type=float)
+        threshold = request.args.get("threshold", default=0.9, type=float)
+        max_windows = request.args.get("max_windows", default=40, type=int)
+
+        if not 0.0 <= speed <= 20.0:
+            raise ValueError("speed must be between 0 and 20")
+        if not 0.05 <= step <= 5.0:
+            raise ValueError("step must be between 0.05 and 5 seconds")
+        if not 0.5 < threshold < 1.0:
+            raise ValueError("threshold must be between 0.5 and 1.0")
+
+        path = _save_upload()
+
+        def generate():
+            try:
+                stream = predictor.stream_from_edf(
+                    path, speed=speed, step_seconds=step
+                )
+                decoder = predictor.streaming_decoder(
+                    threshold=threshold, max_windows=max_windows
+                )
+                total = len(stream)
+                yield _json.dumps({
+                    "type": "start",
+                    "classes": list(predictor.card.classes),
+                    "n_windows": min(total, config.serve.max_epochs_per_request),
+                    "window_seconds": predictor.card.tmax - predictor.card.tmin,
+                    "step_seconds": step,
+                }) + "\n"
+
+                emitted = 0
+                for event in _iter_events(decoder, stream):
+                    yield _json.dumps({"type": "window", **event.to_dict()}) + "\n"
+                    emitted += 1
+                    if emitted >= config.serve.max_epochs_per_request:
+                        yield _json.dumps({
+                            "type": "truncated",
+                            "message": f"stopped after {emitted} windows",
+                        }) + "\n"
+                        break
+                yield _json.dumps({"type": "end", "n_windows": emitted}) + "\n"
+            except InputContractError as exc:
+                yield _json.dumps({"type": "error", "message": str(exc)}) + "\n"
+            except Exception:  # noqa: BLE001
+                log.exception("streaming failed")
+                yield _json.dumps({
+                    "type": "error",
+                    "message": "the recording could not be decoded",
+                }) + "\n"
+            finally:
+                path.unlink(missing_ok=True)
+
+        return current_app.response_class(
+            generate(), mimetype="application/x-ndjson",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
+
+
+def _iter_events(decoder, stream):
+    """Yield streaming events one at a time.
+
+    ``StreamingDecoder.run`` collects everything before returning, which defeats
+    the point of a stream, so the generator form is built here from the same
+    components rather than duplicating the decode logic.
+    """
+    import numpy as np
+
+    from bwt.streaming import StreamEvent
+
+    classes = decoder.classes
+    commands: list[str] = []
+    confidences: list[float] = []
+    decoder.accumulator.reset()
+
+    for window in stream:
+        probabilities = decoder.predictor.model.predict_proba(
+            window.data[None, ...].astype(np.float32)
+        )[0]
+        decision = decoder.accumulator.update(probabilities)
+        event = StreamEvent(
+            window=window.index,
+            onset_seconds=window.onset_seconds,
+            probabilities={c: float(p) for c, p in zip(classes, probabilities)},
+            top_label=classes[int(np.argmax(probabilities))],
+            posterior=decoder.accumulator.posterior_dict(),
+            decision=decision,
+        )
+        if decision is not None:
+            if decision.label is not None and decoder.speller is not None:
+                commands.append(decision.label)
+                confidences.append(decision.confidence)
+                event.speller = decoder.speller.decode(
+                    commands, confidences
+                ).to_dict()
+            decoder.accumulator.reset()
+        yield event
+
+
+def _save_upload() -> Path:
+    """Validate the uploaded file and write it to a private temp path.
+
+    The destination never derives from the client-supplied filename. Callers own
+    the returned path and must delete it.
     """
     if "file" not in request.files:
         raise ValueError("no file part in the request; send multipart field 'file'")
@@ -197,10 +320,17 @@ def _handle_upload(predictor: Predictor):
     handle, temp_path = tempfile.mkstemp(suffix=".edf", prefix="bwt_upload_")
     os.close(handle)
     temp_path = Path(temp_path)
+    upload.save(temp_path)
+    if temp_path.stat().st_size == 0:
+        temp_path.unlink(missing_ok=True)
+        raise ValueError("uploaded file is empty")
+    return temp_path
+
+
+def _handle_upload(predictor: Predictor):
+    """Validate and consume the uploaded file, then predict."""
+    temp_path = _save_upload()
     try:
-        upload.save(temp_path)
-        if temp_path.stat().st_size == 0:
-            raise ValueError("uploaded file is empty")
         return predictor.predict_edf(temp_path)
     finally:
         temp_path.unlink(missing_ok=True)

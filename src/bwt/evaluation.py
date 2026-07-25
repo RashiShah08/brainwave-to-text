@@ -355,6 +355,34 @@ def within_subject_cv(
     )
 
 
+def out_of_fold_probabilities(
+    bundle: EpochBundle,
+    factory: PipelineFactory,
+    *,
+    n_splits: int = 5,
+) -> np.ndarray:
+    """Class probabilities for every trial, each predicted by a model that
+    never saw that trial's subject.
+
+    Needed by :func:`bwt.streaming.evaluate_accumulation`, which must reason
+    about the real error structure of a model -- including the fact that a given
+    subject's errors are correlated with each other -- rather than assuming
+    independent draws.
+    """
+    X, y, groups = bundle.X, bundle.y, bundle.groups
+    proba = np.zeros((len(X), len(bundle.classes)), dtype=np.float64)
+
+    for fold, (train_idx, test_idx) in enumerate(
+        GroupKFold(n_splits=n_splits).split(X, y, groups=groups), start=1
+    ):
+        assert_no_subject_leakage(groups, train_idx, test_idx)
+        model = factory()
+        model.fit(X[train_idx], y[train_idx])
+        proba[test_idx] = model.predict_proba(X[test_idx])
+        log.info("  out-of-fold probabilities: fold %d/%d", fold, n_splits)
+    return proba
+
+
 def permutation_test(
     bundle: EpochBundle,
     factory: PipelineFactory,
@@ -407,6 +435,7 @@ __all__ = [
     "FoldResult",
     "assert_no_subject_leakage",
     "cross_subject_cv",
+    "out_of_fold_probabilities",
     "permutation_test",
     "within_subject_cv",
 ]

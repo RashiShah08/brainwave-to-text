@@ -170,6 +170,11 @@ class TaskSpec:
     label_map: dict[Movement, str]
     #: Fixed class order; the index into this list is the integer label.
     classes: tuple[str, ...] = field(default=())
+    #: Set only for tasks whose whole point is "is the user doing anything at
+    #: all", where collapsing hand and foot movement into one class is the
+    #: intent rather than the v1 labelling bug. Nothing else may set this, and
+    #: the test suite enforces that.
+    merges_effectors: bool = False
 
     def __post_init__(self) -> None:
         if not self.classes:
@@ -261,6 +266,28 @@ TASKS: dict[str, TaskSpec] = {
             Movement.BOTH_FEET: "both_feet",
         },
         classes=("left_fist", "right_fist", "both_fists", "both_feet"),
+    ),
+    # Asynchronous BCI gate: is the user attempting anything at all? A speller
+    # that runs continuously needs this, otherwise it emits a letter every time
+    # the user blinks or looks away. Here the merge across effectors is the
+    # point -- the positive class is "any imagined movement" -- which is why
+    # this is the one task allowed to set `merges_effectors`.
+    "mi_move_vs_rest": TaskSpec(
+        name="mi_move_vs_rest",
+        description=(
+            "Any imagined movement vs cued rest, for asynchronous control "
+            "(runs 4, 6, 8, 10, 12, 14)"
+        ),
+        runs=tuple(sorted(IMAGINED_LR_RUNS + IMAGINED_FF_RUNS)),
+        label_map={
+            Movement.REST: "rest",
+            Movement.LEFT_FIST: "movement",
+            Movement.RIGHT_FIST: "movement",
+            Movement.BOTH_FISTS: "movement",
+            Movement.BOTH_FEET: "movement",
+        },
+        classes=("rest", "movement"),
+        merges_effectors=True,
     ),
     # Adds the cued rest period as an explicit third class. Note this is the
     # *within-run* rest cue, not the separate baseline recordings.

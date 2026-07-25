@@ -339,6 +339,29 @@ def _riemann_ts_aligned(sfreq: float, n_classes: int, random_state: int) -> Pipe
     ])
 
 
+def _deep(architecture: str, **overrides):
+    """Factory for a deep pipeline: broadband filter, then the network.
+
+    The 4-38 Hz band is the standard preprocessing for these architectures. It
+    is applied by the same `BandpassFilter` the classical pipelines use, so the
+    deep models inherit the identical train/serve guarantee.
+    """
+
+    def build(sfreq: float, n_classes: int, random_state: int) -> Pipeline:
+        from bwt.deep import TorchClassifier
+
+        params = dict(
+            architecture=architecture, sfreq=sfreq, random_state=random_state,
+        )
+        params.update(overrides)
+        return Pipeline([
+            ("bandpass", BandpassFilter(4.0, 38.0, sfreq=sfreq)),
+            ("clf", TorchClassifier(**params)),
+        ])
+
+    return build
+
+
 def _bandpower_rf(sfreq: float, n_classes: int, random_state: int) -> Pipeline:
     return Pipeline([
         ("fb", FilterBank(LogVariance, sfreq=sfreq)),
@@ -352,13 +375,25 @@ def _bandpower_rf(sfreq: float, n_classes: int, random_state: int) -> Pipeline:
 
 
 REGISTRY: dict[str, Callable[[float, int, int], Pipeline]] = {
+    # Classical
     "csp_lda": _csp_lda,
     "fbcsp_lda": _fbcsp_lda,
     "riemann_ts": _riemann_ts,
     "riemann_ts_aligned": _riemann_ts_aligned,
     "fb_riemann_ts": _fb_riemann_ts,
     "bandpower_rf": _bandpower_rf,
+    # Neural. Require PyTorch; constructing one without it raises ImportError.
+    "eegnet": _deep("eegnet", lr=1e-3, batch_size=64, max_epochs=300,
+                    patience=50),
+    "shallownet": _deep("shallownet", lr=1e-3, batch_size=64, max_epochs=300,
+                        patience=50),
+    "conformer": _deep("conformer", lr=5e-4, batch_size=64, max_epochs=300,
+                       patience=50, weight_decay=1e-3),
 }
+
+#: Pipelines backed by a neural network. Used to decide whether a benchmark run
+#: needs a GPU and to size batches during evaluation.
+DEEP_PIPELINES = frozenset({"eegnet", "shallownet", "conformer"})
 
 #: Pipelines whose transform depends on the batch it is given. Recorded in the
 #: model card so the serving layer can warn when handed a single epoch.
@@ -406,6 +441,7 @@ def pipeline_factory(name: str, *, sfreq: float, n_classes: int,
 
 
 __all__ = [
+    "DEEP_PIPELINES",
     "DEFAULT_BANDS",
     "DEFAULT_PIPELINE",
     "REGISTRY",

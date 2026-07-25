@@ -36,6 +36,7 @@ def _load_bundle(args):
 
     return load_bundle(
         args.task,
+        dataset=getattr(args, "dataset", "eegmmidb"),
         tmin=args.tmin,
         tmax=args.tmax,
         n_jobs=args.n_jobs,
@@ -289,6 +290,131 @@ def cmd_predict(args) -> int:
     return 0
 
 
+def cmd_datasets(args) -> int:
+    from bwt.data.datasets import get_dataset, list_datasets
+
+    for name, description in list_datasets():
+        print(f"{name}")
+        print(f"  {description}")
+        source = get_dataset(name) if name == "eegmmidb" else None
+        if source is not None:
+            try:
+                print(f"  subjects present: {len(source.subjects())}")
+            except Exception as exc:  # noqa: BLE001
+                print(f"  subjects present: unknown ({exc})")
+        else:
+            print("  subjects: downloaded on first use via MOABB")
+        tasks = get_dataset(name).tasks
+        for task, classes in tasks.items():
+            print(f"    {task:22s} {list(classes)}")
+        print()
+    return 0
+
+
+def cmd_calibrate(args) -> int:
+    from bwt.calibration import calibration_curve
+    from bwt.pipelines import pipeline_factory
+
+    ensure_dirs()
+    bundle = _load_bundle(args)
+    print(bundle.summary())
+
+    def factory():
+        return pipeline_factory(
+            args.pipeline, sfreq=bundle.sfreq, n_classes=len(bundle.classes)
+        )()
+
+    curve = calibration_curve(
+        bundle, factory, pipeline_name=args.pipeline,
+        dataset=args.dataset, budgets=tuple(args.budgets),
+        strategies=tuple(args.strategies), n_splits=args.repeats,
+        finetune_epochs=args.finetune_epochs, max_subjects=args.max_subjects,
+    )
+    print("\n" + curve.summary())
+
+    out = Path(args.output or reports_dir() /
+               f"calibration_{args.dataset}_{args.task}_{args.pipeline}.json")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(curve.to_dict(), indent=2, default=float))
+    print(f"\nwrote {out}")
+    return 0
+
+
+def cmd_stream(args) -> int:
+    from bwt.serving.predictor import Predictor
+
+    predictor = Predictor.load(args.model)
+    stream = predictor.stream_from_edf(
+        Path(args.file), speed=args.speed, step_seconds=args.step
+    )
+    decoder = predictor.streaming_decoder(
+        threshold=args.threshold, max_windows=args.max_windows
+    )
+
+    print(f"model    : {predictor.name}")
+    print(f"classes  : {predictor.card.classes}")
+    print(f"windows  : {len(stream)} (step {args.step}s, speed {args.speed or 'max'})")
+    print()
+
+    decisions = timeouts = 0
+    text = ""
+    for event in decoder.run(stream):
+        if event.decision is None:
+            continue
+        decision = event.decision
+        if decision.timed_out:
+            timeouts += 1
+            print(f"  t={event.onset_seconds:7.2f}s  (timed out after "
+                  f"{decision.n_windows} windows)")
+        else:
+            decisions += 1
+            print(f"  t={event.onset_seconds:7.2f}s  {decision.label:12s} "
+                  f"p={decision.confidence:.3f} after {decision.n_windows} windows")
+        if event.speller:
+            text = event.speller["text"]
+
+    print(f"\ndecisions: {decisions} committed, {timeouts} timed out")
+    print(f"spelled  : {text!r}")
+    return 0
+
+
+def cmd_explain(args) -> int:
+    from bwt.artifacts import load_artifact, resolve_artifact
+    from bwt.explain import ERD_WINDOW, csp_patterns, erd_curve, lateralisation_index
+
+    ensure_dirs()
+    out_dir = Path(args.output or reports_dir())
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # ERD needs pre-cue samples, which the decoding window does not contain.
+    args.tmin, args.tmax = ERD_WINDOW
+    bundle = _load_bundle(args)
+    print(bundle.summary())
+
+    erd_path = erd_curve(bundle, output=out_dir / f"erd_{args.task}.png")
+    print(f"ERD curve   -> {erd_path}")
+
+    index = lateralisation_index(bundle)
+    print("\nlateralisation index (C3 - C4, % change vs pre-cue baseline):")
+    for name, value in index["index_per_class"].items():
+        print(f"  {name:14s} {value:+.2f}")
+    print(f"  {index['interpretation']}")
+
+    try:
+        path = resolve_artifact(args.model)
+        model, card = load_artifact(path)
+        csp_path = csp_patterns(model, card,
+                                output=out_dir / f"csp_{card.task}.png")
+        print(f"\nCSP patterns -> {csp_path}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"\nCSP patterns skipped: {exc}")
+
+    summary = out_dir / f"explain_{args.task}.json"
+    summary.write_text(json.dumps(index, indent=2, default=float))
+    print(f"wrote {summary}")
+    return 0
+
+
 def cmd_models(args) -> int:
     from bwt.artifacts import list_artifacts
 
@@ -340,6 +466,7 @@ def cmd_serve(args) -> int:  # pragma: no cover - long running
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from bwt.data.datasets import DEFAULT_DATASET, list_datasets
     from bwt.data.epochs import DEFAULT_TMAX, DEFAULT_TMIN
     from bwt.data.physionet import DEFAULT_TASK, TASKS
     from bwt.pipelines import DEFAULT_PIPELINE, REGISTRY
@@ -355,7 +482,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     def add_data_args(p):
-        p.add_argument("--task", default=DEFAULT_TASK, choices=sorted(TASKS))
+        p.add_argument("--dataset", default=DEFAULT_DATASET,
+                       choices=[n for n, _ in list_datasets()])
+        p.add_argument("--task", default=DEFAULT_TASK,
+                       help=f"one of {sorted(TASKS)} for eegmmidb; "
+                            "bnci2a supports mi_left_right and mi_four_class")
         p.add_argument("--tmin", type=float, default=DEFAULT_TMIN)
         p.add_argument("--tmax", type=float, default=DEFAULT_TMAX)
         p.add_argument("--subjects", type=_subject_list, default=None,
@@ -408,6 +539,44 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-spell", action="store_true")
     p.add_argument("--limit", type=int, default=20)
     p.set_defaults(func=cmd_predict)
+
+    p = sub.add_parser("datasets", help="list datasets and their tasks")
+    p.set_defaults(func=cmd_datasets)
+
+    p = sub.add_parser("calibrate",
+                       help="measure accuracy vs number of calibration trials")
+    add_data_args(p)
+    p.add_argument("--pipeline", default="eegnet", choices=sorted(REGISTRY))
+    p.add_argument("--budgets", type=int, nargs="+", default=[0, 5, 10, 20, 40],
+                   help="calibration trial counts to sweep")
+    p.add_argument("--strategies", nargs="+", default=["none", "finetune"],
+                   choices=["none", "finetune", "refit"])
+    p.add_argument("--repeats", type=int, default=3,
+                   help="random calibration subsets per budget")
+    p.add_argument("--finetune-epochs", type=int, default=40)
+    p.add_argument("--max-subjects", type=int, default=15,
+                   help="subjects to evaluate (each needs a population model)")
+    p.add_argument("--output", default=None)
+    p.set_defaults(func=cmd_calibrate)
+
+    p = sub.add_parser("stream",
+                       help="decode a recording continuously with evidence accumulation")
+    p.add_argument("file")
+    p.add_argument("--model", default=None)
+    p.add_argument("--speed", type=float, default=0.0,
+                   help="replay speed; 1.0 is real time, 0 is as fast as possible")
+    p.add_argument("--step", type=float, default=0.5, help="window step in seconds")
+    p.add_argument("--threshold", type=float, default=0.9,
+                   help="posterior required to commit a decision")
+    p.add_argument("--max-windows", type=int, default=40)
+    p.set_defaults(func=cmd_stream)
+
+    p = sub.add_parser("explain",
+                       help="ERD curves, CSP topographies, lateralisation index")
+    add_data_args(p)
+    p.add_argument("--model", default=None)
+    p.add_argument("--output", default=None)
+    p.set_defaults(func=cmd_explain)
 
     p = sub.add_parser("models", help="list trained artifacts")
     p.set_defaults(func=cmd_models)

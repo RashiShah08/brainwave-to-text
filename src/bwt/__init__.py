@@ -14,7 +14,7 @@ Public surface:
     bwt.serving   -- Flask application
 """
 
-__version__ = "2.0.0"
+__version__ = "3.0.0"
 
 # Schema version for persisted artifacts. Bump whenever the meaning of a saved
 # pipeline's input changes (channel order, sfreq, epoch window semantics) so

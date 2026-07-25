@@ -76,6 +76,8 @@ class TestTasks:
         hand = {Movement.LEFT_FIST, Movement.RIGHT_FIST}
         foot = {Movement.BOTH_FISTS, Movement.BOTH_FEET}
         for name, task in TASKS.items():
+            if task.merges_effectors:
+                continue  # covered by the dedicated test below
             by_class: dict[str, set[Movement]] = {}
             for movement, class_name in task.label_map.items():
                 by_class.setdefault(class_name, set()).add(movement)
@@ -84,6 +86,23 @@ class TestTasks:
                     f"task {name} class {class_name!r} merges hand and foot "
                     f"movements: {movements}"
                 )
+
+    def test_only_move_vs_rest_may_merge_effectors(self):
+        """The effector-merge exemption must stay a deliberate special case.
+
+        `mi_move_vs_rest` legitimately collapses every movement into one class
+        because the question it asks is "is the user doing anything". If any
+        other task ever sets this flag, the v1 labelling bug is back.
+        """
+        exempt = {name for name, task in TASKS.items() if task.merges_effectors}
+        assert exempt == {"mi_move_vs_rest"}
+
+    def test_move_vs_rest_separates_rest_from_movement(self):
+        task = get_task("mi_move_vs_rest")
+        assert task.class_of(4, "T0") == "rest"
+        assert task.class_of(4, "T1") == "movement"
+        assert task.class_of(6, "T2") == "movement"
+        assert task.executions == {Execution.IMAGINED}
 
     def test_rest_is_only_a_class_when_asked_for(self):
         assert "rest" not in get_task("mi_left_right").classes
