@@ -403,3 +403,95 @@ class TestBNCI2aEpoching:
         monkeypatch.setattr(dataset, "_moabb", lambda: _Fake())
         with pytest.raises(ValueError, match="250"):
             dataset.load_subject(1, "mi_four_class", 0.5, 3.5)
+
+
+class TestDeepArtifactRoundTrip:
+    """A neural pipeline must survive the full artifact path, not just pickling.
+
+    The estimator persists its weights via __getstate__/__setstate__ and rebuilds
+    the module on load. That interacts with joblib compression, the surrounding
+    sklearn Pipeline, and the model card's schema check, so it is worth
+    exercising end to end rather than trusting the unit-level pickle test.
+    """
+
+    def _bundle_and_model(self, synthetic_bundle):
+        from bwt.pipelines import build_pipeline
+
+        model = build_pipeline("eegnet", sfreq=synthetic_bundle.sfreq,
+                               n_classes=2)
+        model.named_steps["clf"].set_params(
+            device="cpu", max_epochs=20, patience=20
+        )
+        model.fit(synthetic_bundle.X, synthetic_bundle.y)
+        return model
+
+    def _card(self, bundle):
+        from bwt.artifacts import ModelCard
+
+        return ModelCard(
+            name="deep_roundtrip", task=bundle.task,
+            task_description="round-trip check", pipeline="eegnet",
+            classes=list(bundle.classes), sfreq=bundle.sfreq,
+            n_channels=bundle.n_channels, n_times=bundle.n_times,
+            ch_names=list(bundle.ch_names), tmin=bundle.tmin, tmax=bundle.tmax,
+            chance_level=0.5,
+        )
+
+    def test_predictions_survive_save_and_load(self, synthetic_bundle, tmp_path):
+        from bwt.artifacts import load_artifact, save_artifact
+
+        model = self._bundle_and_model(synthetic_bundle)
+        expected = model.predict_proba(synthetic_bundle.X)
+
+        path = save_artifact(model, self._card(synthetic_bundle),
+                             path=tmp_path / "deep")
+        restored, card = load_artifact(path)
+
+        np.testing.assert_allclose(
+            restored.predict_proba(synthetic_bundle.X), expected, rtol=1e-5
+        )
+        assert card.classes == list(synthetic_bundle.classes)
+
+    def test_serving_predictor_matches_the_saved_model(self, synthetic_bundle,
+                                                       tmp_path):
+        """Train/serve parity must hold for neural pipelines too."""
+        from bwt.artifacts import load_artifact, save_artifact
+        from bwt.serving.predictor import Predictor
+
+        model = self._bundle_and_model(synthetic_bundle)
+        path = save_artifact(model, self._card(synthetic_bundle),
+                             path=tmp_path / "deep")
+        saved, _ = load_artifact(path)
+        expected = saved.predict(synthetic_bundle.X)
+
+        predictor = Predictor.load(path)
+        served = predictor.predict_array(synthetic_bundle.X)
+        actual = np.array(
+            [synthetic_bundle.classes.index(p.label) for p in served]
+        )
+        np.testing.assert_array_equal(actual, expected)
+
+    def test_loaded_model_enforces_the_input_contract(self, synthetic_bundle,
+                                                      tmp_path):
+        from bwt.artifacts import save_artifact
+        from bwt.serving.predictor import InputContractError, Predictor
+
+        model = self._bundle_and_model(synthetic_bundle)
+        path = save_artifact(model, self._card(synthetic_bundle),
+                             path=tmp_path / "deep")
+        predictor = Predictor.load(path)
+        with pytest.raises(InputContractError):
+            predictor.validate_array(np.zeros((2, 8, 481), dtype=np.float32))
+
+    def test_weights_are_stored_on_cpu(self, synthetic_bundle, tmp_path):
+        """A GPU-trained artifact must load on a machine without a GPU."""
+        import joblib
+
+        from bwt.artifacts import PIPELINE_FILE, save_artifact
+
+        model = self._bundle_and_model(synthetic_bundle)
+        path = save_artifact(model, self._card(synthetic_bundle),
+                             path=tmp_path / "deep")
+        raw = joblib.load(path / PIPELINE_FILE)
+        state = raw.named_steps["clf"].__getstate__()["_module_state"]
+        assert all(tensor.device.type == "cpu" for tensor in state.values())
