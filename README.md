@@ -72,7 +72,27 @@ The fix is a better *decision rule*, not a better classifier. `bwt.streaming`
 accumulates log-likelihood across repeated trials and commits only when the
 posterior crosses a threshold — sequential probability ratio testing.
 
-ACCUMULATION_TABLE
+Measured on **real out-of-fold probabilities** from the cross-subject `csp_lda`
+model, where a single trial scores 0.611:
+
+| Commit threshold | Decision accuracy | Trials per decision | Sequences that commit |
+|---|---|---|---|
+| 0.75 | 0.654 | 4.7 | 98% |
+| 0.90 | 0.674 | 8.0 | 90% |
+| 0.99 | **0.707** | 12.8 | 72% |
+
+**This is much weaker than an idealised simulation suggests, and that gap is the
+point.** `simulate_speller_throughput`, which assumes independent draws, predicts
+0.99+ decision accuracy from the same 0.611 decoder. Reality gives 0.707, because
+a subject's errors are correlated: for someone the model cannot decode, gathering
+more evidence yields a *confidently wrong* answer rather than a correct one. At
+the strictest threshold, 28% of sequences never commit at all.
+
+What that means for spelling, stated plainly: at 0.707 per decision and five
+decisions per character, the intended character is selected about 18% of the
+time, and each attempt costs roughly 12.8 × 5 ≈ 64 trials. Evidence accumulation
+is a real and worthwhile improvement, but **it does not turn this into a usable
+speller.**
 
 Two caveats, both enforced in the code:
 
@@ -85,6 +105,34 @@ Two caveats, both enforced in the code:
   on the `/live` page: a subject the model is biased on will produce a long run
   of the same confident-but-wrong decision. `simulate_speller_throughput`
   documents its independence assumption and should be read as an upper bound.
+
+### The same code on a different lab's data
+
+BCI Competition IV-2a, subject A01, under the competition's own protocol — train
+on session one, test on session two recorded on a different day:
+
+| Pipeline | Two-class | Four-class | κ (four-class) |
+|---|---|---|---|
+| `csp_lda` | **0.903** | 0.809 | 0.745 |
+| `riemann_ts` | 0.875 | **0.816** | 0.755 |
+| `fbcsp_lda` | 0.896 | 0.802 | 0.736 |
+
+```bash
+bwt evaluate --dataset bnci2a --task mi_four_class --protocols session_holdout
+```
+
+Not a single line of pipeline code changed between this and the EEGMMIDB
+results — a different lab, amplifier, 22 electrodes instead of 64, 250 Hz
+instead of 160, and a tongue-imagery class. That matters for interpreting the
+modest EEGMMIDB numbers: **the gap is a property of the corpora, not a defect in
+the implementation.** EEGMMIDB supplies 45 imagined trials per subject for the
+left/right task; BCI IV-2a supplies 288 per session under tighter experimental
+control.
+
+Two honest caveats. This is **one subject** — the remaining eight are still
+downloading from a host that serves at ~27 kB/s — and A01 is a comparatively
+strong performer. Published nine-subject means for four-class CSP on this dataset
+sit nearer 0.68, so do not read 0.81 as a dataset-level figure.
 
 ### Does the model use real physiology?
 
