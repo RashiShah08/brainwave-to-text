@@ -26,14 +26,24 @@ Chance = 50.0%. Full record in `reports/benchmark_v3.json`.
 
 | Pipeline | Type | Within-subject | Cross-subject | κ (cross) |
 |---|---|---|---|---|
-| `eegnet` | neural | RESULTS_EEGNET_WITHIN | **0.628 ± 0.027** | 0.256 |
+| `eegnet` | neural | not measured¹ | **0.628 ± 0.027** | 0.256 |
 | `csp_lda` | classical | 0.606 ± 0.174 | 0.611 ± 0.023 | 0.222 |
-| `riemann_ts_aligned` | classical | 0.631 ± 0.161 | 0.580 ± 0.007 | 0.161 |
+| `riemann_ts_aligned` | classical | **0.631 ± 0.161** | 0.580 ± 0.007 | 0.161 |
 | `riemann_ts` | classical | 0.626 ± 0.155 | 0.578 ± 0.015 | 0.156 |
-| `shallownet` | neural | — | RESULTS_SHALLOW | — |
-| `conformer` | neural | — | RESULTS_CONFORMER | — |
+| `shallownet` | neural | not measured¹ | not measured¹ | — |
+| `conformer` | neural | not measured¹ | not measured¹ | — |
 | `fbcsp_lda` | classical | 0.559 ± 0.113 | 0.563 ± 0.010 | 0.126 |
 | `bandpower_rf` | classical | 0.538 ± 0.106 | 0.536 ± 0.009 | 0.072 |
+
+¹ Not run to completion on the machine used — omitted rather than estimated.
+Deep within-subject cross-validation means 105 subjects × 5 folds of GPU
+training on ~36 trials each, and `shallownet`/`conformer` build large
+intermediate activations that make their cross-subject folds several times
+slower than EEGNet's. Fill any cell with e.g.
+`bwt benchmark --pipelines shallownet --protocols cross_subject`. Expect deep
+*within-subject* scores to be poor regardless: 36 training trials is far below
+what these architectures need, which is precisely why per-user calibration
+starts from a population model rather than training from scratch.
 
 **The two columns answer different questions.**
 
