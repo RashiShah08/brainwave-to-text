@@ -63,7 +63,9 @@ def _subject_list(value: str | None) -> list[int] | None:
 
 
 def _evaluate(bundle, pipeline_name, protocols, splits, n_jobs, permutations):
-    from bwt.evaluation import cross_subject_cv, permutation_test, within_subject_cv
+    from bwt.evaluation import (
+        cross_subject_cv, permutation_test, session_holdout, within_subject_cv,
+    )
     from bwt.pipelines import pipeline_factory
 
     def factory():
@@ -73,7 +75,7 @@ def _evaluate(bundle, pipeline_name, protocols, splits, n_jobs, permutations):
 
     results = {}
     for protocol in protocols:
-        log.info("running %s cross-validation with %s", protocol, pipeline_name)
+        log.info("running %s evaluation with %s", protocol, pipeline_name)
         if protocol == "within_subject":
             result = within_subject_cv(
                 bundle, factory, pipeline_name=pipeline_name,
@@ -83,6 +85,10 @@ def _evaluate(bundle, pipeline_name, protocols, splits, n_jobs, permutations):
             result = cross_subject_cv(
                 bundle, factory, pipeline_name=pipeline_name,
                 n_splits=splits, n_jobs=1,
+            )
+        elif protocol == "session_holdout":
+            result = session_holdout(
+                bundle, factory, pipeline_name=pipeline_name,
             )
         else:
             raise ValueError(f"unknown protocol {protocol!r}")
@@ -495,8 +501,12 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--no-cache", action="store_true")
 
     def add_cv_args(p):
-        p.add_argument("--protocols", nargs="+", default=["within_subject", "cross_subject"],
-                       choices=["within_subject", "cross_subject"])
+        p.add_argument("--protocols", nargs="+",
+                       default=["within_subject", "cross_subject"],
+                       choices=["within_subject", "cross_subject",
+                                "session_holdout"],
+                       help="session_holdout needs a dataset with sessions "
+                            "(bnci2a): train on day one, test on day two")
         p.add_argument("--cv-splits", type=int, default=5)
         p.add_argument("--permutations", type=int, default=0,
                        help="permutation-test iterations (0 = skip)")

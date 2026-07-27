@@ -110,3 +110,50 @@ class TestResultSerialisation:
     def test_summary_mentions_chance(self, synthetic_bundle, factory):
         result = cross_subject_cv(synthetic_bundle, factory, n_splits=3)
         assert "chance" in result.summary()
+
+
+class TestSessionHoldout:
+    """Train on one session, test on another -- the BCI IV-2a protocol."""
+
+    def _two_session_bundle(self, synthetic_bundle):
+        """Relabel half of each subject's trials as a second session.
+
+        Split *within* each class, not at the midpoint of the subject's trials:
+        the fixture stores trials grouped by class, so a midpoint split would
+        put every class-0 trial in one session and every class-1 trial in the
+        other, leaving neither session trainable.
+        """
+        bundle = synthetic_bundle
+        runs = np.zeros(bundle.n_trials, dtype=np.int64)
+        for subject in bundle.subjects:
+            for label in np.unique(bundle.y):
+                rows = np.where((bundle.groups == subject) & (bundle.y == label))[0]
+                runs[rows[len(rows) // 2:]] = 1
+        object.__setattr__(bundle, "runs", runs)
+        return bundle
+
+    def test_trains_on_one_session_and_tests_on_the_other(
+        self, synthetic_bundle, factory
+    ):
+        from bwt.evaluation import session_holdout
+
+        bundle = self._two_session_bundle(synthetic_bundle)
+        result = session_holdout(bundle, factory, pipeline_name="csp_lda")
+
+        assert result.protocol == "session_holdout"
+        assert len(result.folds) == len(bundle.subjects)
+        for fold in result.folds:
+            assert fold.n_train > 0 and fold.n_test > 0
+
+    def test_each_fold_covers_exactly_one_subject(self, synthetic_bundle, factory):
+        from bwt.evaluation import session_holdout
+
+        bundle = self._two_session_bundle(synthetic_bundle)
+        result = session_holdout(bundle, factory)
+        assert [len(f.test_subjects) for f in result.folds] == [1] * len(result.folds)
+
+    def test_missing_session_is_rejected(self, synthetic_bundle, factory):
+        from bwt.evaluation import session_holdout
+
+        with pytest.raises(ValueError, match="not possible"):
+            session_holdout(synthetic_bundle, factory, train_run=7, test_run=8)

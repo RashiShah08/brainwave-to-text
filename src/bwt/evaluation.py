@@ -355,6 +355,83 @@ def within_subject_cv(
     )
 
 
+def session_holdout(
+    bundle: EpochBundle,
+    factory: PipelineFactory,
+    *,
+    pipeline_name: str = "pipeline",
+    train_run: int = 0,
+    test_run: int = 1,
+) -> CVResult:
+    """Train on one recording session and test on another, per subject.
+
+    This is the BCI Competition IV-2a protocol: session one is the labelled
+    training set, session two was recorded on a different day and is the test
+    set. It is a harder and more realistic setting than within-session
+    cross-validation, because electrode placement and the subject's state both
+    drift between days, but an easier one than cross-subject transfer.
+
+    Requires a dataset whose ``runs`` field distinguishes sessions.
+    """
+    started = time.time()
+    X, y, groups, runs = bundle.X, bundle.y, bundle.groups, bundle.runs
+    n_classes = len(bundle.classes)
+
+    if not {train_run, test_run} <= set(np.unique(runs).tolist()):
+        raise ValueError(
+            f"bundle has sessions {sorted(set(runs.tolist()))}, so a "
+            f"{train_run}->{test_run} holdout is not possible"
+        )
+
+    folds: list[FoldResult] = []
+    all_true: list[np.ndarray] = []
+    all_pred: list[np.ndarray] = []
+
+    for subject in bundle.subjects:
+        train_idx = np.where((groups == subject) & (runs == train_run))[0]
+        test_idx = np.where((groups == subject) & (runs == test_run))[0]
+        if not len(train_idx) or not len(test_idx):
+            log.warning("subject %s lacks one of the sessions; skipping", subject)
+            continue
+        if len(np.unique(y[train_idx])) < 2:
+            continue
+
+        model = factory()
+        t0 = time.time()
+        model.fit(X[train_idx], y[train_idx])
+        pred = model.predict(X[test_idx])
+        truth = y[test_idx]
+        all_true.append(truth)
+        all_pred.append(pred)
+
+        result = _score_fold(truth, pred, subject, len(train_idx), len(test_idx),
+                             [subject], time.time() - t0)
+        folds.append(result)
+        log.info("  session holdout subject %s: acc=%.4f kappa=%.4f",
+                 subject, result.accuracy, result.kappa)
+
+    if not folds:
+        raise RuntimeError("no subject had both sessions")
+
+    chance, majority = _levels(y, n_classes)
+    return CVResult(
+        protocol="session_holdout",
+        pipeline=pipeline_name,
+        task=bundle.task,
+        classes=list(bundle.classes),
+        folds=folds,
+        chance_level=chance,
+        majority_level=majority,
+        confusion=confusion_matrix(
+            np.concatenate(all_true), np.concatenate(all_pred),
+            labels=list(range(n_classes)),
+        ).tolist(),
+        n_trials=bundle.n_trials,
+        n_subjects=len(bundle.subjects),
+        elapsed_seconds=time.time() - started,
+    )
+
+
 def out_of_fold_probabilities(
     bundle: EpochBundle,
     factory: PipelineFactory,
@@ -437,5 +514,6 @@ __all__ = [
     "cross_subject_cv",
     "out_of_fold_probabilities",
     "permutation_test",
+    "session_holdout",
     "within_subject_cv",
 ]
