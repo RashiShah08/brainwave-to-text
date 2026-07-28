@@ -26,7 +26,7 @@ Chance = 50.0%. Full record in `reports/benchmark_v3.json`.
 
 | Pipeline | Type | Within-subject | Cross-subject | κ (cross) |
 |---|---|---|---|---|
-| `shallownet` | neural | not measured¹ | **0.640 ± 0.022** | 0.280 |
+| `shallownet` | neural | 0.515 ± 0.095 | **0.640 ± 0.022** | 0.280 |
 | `conformer` | neural | not measured¹ | 0.639 ± 0.027 | 0.277 |
 | `eegnet` | neural | 0.526 ± 0.087 | 0.628 ± 0.027 | 0.256 |
 | `csp_lda` | classical | 0.606 ± 0.174 | 0.611 ± 0.023 | 0.222 |
@@ -54,10 +54,11 @@ interval of any pipeline here (±0.006). The within-subject ordering is the
 reverse, where the single-band version wins (0.626 vs 0.593), because the
 filter bank's extra parameters cannot be fitted from ~36 trials.
 
-**The two columns invert, and that is the most useful thing in the table.** The
-neural models take the top two cross-subject places (ShallowConvNet 0.640,
-EEGNet 0.628) while EEGNet is the *worst* within-subject model at 0.526, barely
-above chance — and `riemann_ts_aligned` does the exact opposite.
+**The two columns invert, and that is the most useful thing in the table.**
+ShallowConvNet is simultaneously the **best** cross-subject model (0.640) and
+the **worst** within-subject one (0.515 — a coin flip), a swing of 12.5 points
+from the same architecture on the same data. EEGNet does the same thing (0.628
+against 0.526), while `riemann_ts_aligned` runs the other way entirely.
 
 The reason is data volume per fit. Within-subject training sees ~36 trials, far
 below what a convolutional network needs, whereas the classical pipelines encode
