@@ -445,11 +445,24 @@ execution primitive, and v1 shipped it.
 ## Development
 
 ```bash
-pip install -r requirements-dev.txt
-pytest                    # full suite
-pytest -m "not slow"      # skip tests needing the dataset
-pytest --cov=bwt
+make install-dev          # or: pip install -r requirements-dev.txt && pip install -e .
+make test                 # full suite
+make test-fast            # skip tests needing the dataset
+make lint                 # ruff
+make coverage
 ```
+
+`make help` lists every target. CI (`.github/workflows/ci.yml`) runs the
+hermetic suite on Linux and Windows across Python 3.11 and 3.12, plus a
+CPU-PyTorch job for the neural pipelines, a ruff check, and a Docker build.
+Release history and the reasoning behind each change is in
+[CHANGELOG.md](CHANGELOG.md).
+
+Long benchmarks are resumable. `bwt benchmark --time-budget 600` runs for ten
+minutes, checkpoints every fold as it completes, and stops at a fold boundary;
+re-running continues from where it stopped. The checkpoint keeps per-fold true
+and predicted labels, so any number in this README can be recomputed without
+retraining.
 
 The unit suite is hermetic: it generates synthetic epochs with a real, learnable
 class difference and writes synthetic EDF files, so it runs on a checkout with no
