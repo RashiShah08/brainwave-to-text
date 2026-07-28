@@ -383,12 +383,22 @@ REGISTRY: dict[str, Callable[[float, int, int], Pipeline]] = {
     "fb_riemann_ts": _fb_riemann_ts,
     "bandpower_rf": _bandpower_rf,
     # Neural. Require PyTorch; constructing one without it raises ImportError.
+    #
+    # EEGNet is ~2.8k parameters and its activations are small, so it tolerates
+    # a large batch and a long epoch budget. ShallowConvNet and EEG-Conformer
+    # apply their temporal convolution across all 64 channels *before* the
+    # spatial convolution reduces them, producing a (batch, 40, 64, ~466)
+    # intermediate -- roughly 300 MB per batch of 64 in float32, before
+    # gradients. On an 8 GB card that sits at ~95% of VRAM and throughput
+    # collapses. Halving the batch keeps them comfortably resident; the shorter
+    # epoch budget reflects that both converge far sooner than EEGNet (early
+    # stopping triggered around epoch 50-100 in every run measured here).
     "eegnet": _deep("eegnet", lr=1e-3, batch_size=64, max_epochs=300,
                     patience=50),
-    "shallownet": _deep("shallownet", lr=1e-3, batch_size=64, max_epochs=300,
-                        patience=50),
-    "conformer": _deep("conformer", lr=5e-4, batch_size=64, max_epochs=300,
-                       patience=50, weight_decay=1e-3),
+    "shallownet": _deep("shallownet", lr=1e-3, batch_size=32, max_epochs=150,
+                        patience=25),
+    "conformer": _deep("conformer", lr=5e-4, batch_size=32, max_epochs=150,
+                       patience=25, weight_decay=1e-3),
 }
 
 #: Pipelines backed by a neural network. Used to decide whether a benchmark run
