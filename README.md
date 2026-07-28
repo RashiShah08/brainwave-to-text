@@ -32,6 +32,7 @@ Chance = 50.0%. Full record in `reports/benchmark_v3.json`.
 | `riemann_ts` | classical | 0.626 ± 0.155 | 0.578 ± 0.015 | 0.156 |
 | `shallownet` | neural | not measured¹ | RESULT_SHALLOW | — |
 | `conformer` | neural | not measured¹ | RESULT_CONFORMER | — |
+| `fb_riemann_ts` | classical | 0.593 ± 0.137 | not measured¹ | — |
 | `fbcsp_lda` | classical | 0.559 ± 0.113 | 0.563 ± 0.010 | 0.126 |
 | `bandpower_rf` | classical | 0.538 ± 0.106 | 0.536 ± 0.009 | 0.072 |
 
