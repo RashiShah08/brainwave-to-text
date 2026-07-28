@@ -161,13 +161,14 @@ Two caveats, both enforced in the code:
 ### The same code on a different lab's data
 
 BCI Competition IV-2a under the competition's own protocol — train on session
-one, test on session two, recorded on a different day. **Two subjects of nine**;
-the rest were still downloading from a host that serves at ~27 kB/s.
+one, test on session two, recorded on a different day. **Three subjects of
+nine** (A01–A03); the remaining six were not downloaded.
 
 | Pipeline | Two-class | Four-class | κ (four-class) |
 |---|---|---|---|
-| `csp_lda` | **0.705 ± 0.280** | **0.662 ± 0.209** | 0.549 |
-| `riemann_ts` | 0.701 ± 0.246 | 0.632 ± 0.260 | 0.509 |
+| `riemann_ts` | **0.796 ± 0.239** | 0.694 ± 0.214 | 0.593 |
+| `csp_lda` | 0.778 ± 0.235 | 0.688 ± 0.154 | 0.583 |
+| `fbcsp_lda` | 0.745 ± 0.237 | **0.712 ± 0.175** | 0.616 |
 
 ```bash
 bwt evaluate --dataset bnci2a --task mi_four_class --protocols session_holdout
@@ -175,27 +176,28 @@ bwt evaluate --dataset bnci2a --task mi_four_class --protocols session_holdout
 
 Not a line of pipeline code changed between this and the EEGMMIDB results — a
 different lab, amplifier, 22 electrodes instead of 64, 250 Hz instead of 160,
-and a tongue-imagery class.
+and a tongue-imagery class. The four-class means sit right on the published
+nine-subject figures for this dataset (~0.68), which is the strongest evidence
+here that the implementation is sound.
 
-**Look at the standard deviations, not the means.** They are enormous because
-the two subjects are wildly different:
+**Read the standard deviations, not just the means.** They are large because the
+subjects differ enormously:
 
-| Subject | Two-class | Four-class |
+| Subject | Two-class (`riemann_ts`) | Four-class (`fbcsp_lda`) |
 |---|---|---|
-| A01 | 0.903 | 0.809 |
-| A02 | 0.507 | 0.514 |
+| A01 | 0.875 | 0.802 |
+| A02 | 0.528 | 0.510 |
+| A03 | **0.986** | 0.823 |
 
-A01 is one of the strongest subjects in the corpus; A02 is at chance on the
-two-class task (0.507 against 0.500) while still well above chance on four-class
-(0.514 against 0.250). This is the same bimodality that shows up as the ±0.17
-spread on EEGMMIDB — a substantial minority of people cannot drive a
-motor-imagery BCI — and it is why a two-subject mean should not be quoted as a
-dataset result. Published nine-subject means for four-class CSP sit near 0.68,
-which the 0.662 here is consistent with.
+A03 is decoded almost perfectly on the two-class task; A02 sits at chance on it
+(0.528 against 0.500) while still beating chance on four-class (0.510 against
+0.250). That is the same bimodality visible as the ±0.17 spread on EEGMMIDB — a
+substantial minority of people cannot drive a motor-imagery BCI, and no amount
+of modelling fixes it.
 
-The comparison with EEGMMIDB's 0.611 still holds, and still points at the
-corpora rather than the code: BCI IV-2a supplies 288 trials per session under
-tighter experimental control against EEGMMIDB's ~45 per subject.
+The comparison with EEGMMIDB's 0.611 still points at the corpora rather than the
+code: BCI IV-2a supplies 288 trials per session under tighter experimental
+control against EEGMMIDB's ~45 per subject.
 
 ### Does the model use real physiology?
 
