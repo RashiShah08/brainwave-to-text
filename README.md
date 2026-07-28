@@ -26,11 +26,11 @@ Chance = 50.0%. Full record in `reports/benchmark_v3.json`.
 
 | Pipeline | Type | Within-subject | Cross-subject | κ (cross) |
 |---|---|---|---|---|
-| `eegnet` | neural | 0.526 ± 0.087 | **0.628 ± 0.027** | 0.256 |
+| `shallownet` | neural | not measured¹ | **0.640 ± 0.022** | 0.280 |
+| `eegnet` | neural | 0.526 ± 0.087 | 0.628 ± 0.027 | 0.256 |
 | `csp_lda` | classical | 0.606 ± 0.174 | 0.611 ± 0.023 | 0.222 |
 | `riemann_ts_aligned` | classical | **0.631 ± 0.161** | 0.580 ± 0.007 | 0.161 |
 | `riemann_ts` | classical | 0.626 ± 0.155 | 0.578 ± 0.015 | 0.156 |
-| `shallownet` | neural | not measured¹ | RESULT_SHALLOW | — |
 | `conformer` | neural | not measured¹ | RESULT_CONFORMER | — |
 | `fb_riemann_ts` | classical | 0.593 ± 0.137 | not measured¹ | — |
 | `fbcsp_lda` | classical | 0.559 ± 0.113 | 0.563 ± 0.010 | 0.126 |
@@ -39,14 +39,19 @@ Chance = 50.0%. Full record in `reports/benchmark_v3.json`.
 ¹ Not run — omitted rather than estimated. Fill any cell with e.g.
 `bwt benchmark --pipelines shallownet --protocols within_subject`.
 
-**The two columns invert, and that is the most useful thing in the table.**
-EEGNet is the best cross-subject model (0.628) and the *worst* within-subject
-one (0.526, barely above chance) — while `riemann_ts_aligned` does the
-opposite. The reason is data volume per fit: within-subject training sees ~36
-trials, far below what a convolutional network needs, whereas the classical
-pipelines encode a strong prior (band-limited spatial covariance) that survives
-tiny samples. Pooled across 105 subjects the network finally has enough data and
-overtakes them.
+**The two columns invert, and that is the most useful thing in the table.** The
+neural models take the top two cross-subject places (ShallowConvNet 0.640,
+EEGNet 0.628) while EEGNet is the *worst* within-subject model at 0.526, barely
+above chance — and `riemann_ts_aligned` does the exact opposite.
+
+The reason is data volume per fit. Within-subject training sees ~36 trials, far
+below what a convolutional network needs, whereas the classical pipelines encode
+a strong prior — band-limited spatial covariance — that survives tiny samples.
+Pooled across 105 subjects the networks finally have enough data and overtake
+them. ShallowConvNet wins because its architecture *is* that same prior made
+learnable: temporal convolution, spatial convolution, square, average-pool, log
+— exactly the log-band-power computation CSP hands to its classifier, but with
+the filters fitted rather than fixed.
 
 The practical reading: **use a neural model when serving strangers, a Riemannian
 one when you can calibrate on the user.** That is also why calibration
