@@ -30,9 +30,9 @@ Chance = 50.0%. Full record in `reports/benchmark_v3.json`.
 | `conformer` | neural | not measured¹ | 0.639 ± 0.027 | 0.277 |
 | `eegnet` | neural | 0.526 ± 0.087 | 0.628 ± 0.027 | 0.256 |
 | `csp_lda` | classical | 0.606 ± 0.174 | 0.611 ± 0.023 | 0.222 |
+| `fb_riemann_ts` | classical | 0.593 ± 0.137 | 0.609 ± 0.006 | 0.219 |
 | `riemann_ts_aligned` | classical | **0.631 ± 0.161** | 0.580 ± 0.007 | 0.161 |
 | `riemann_ts` | classical | 0.626 ± 0.155 | 0.578 ± 0.015 | 0.156 |
-| `fb_riemann_ts` | classical | 0.593 ± 0.137 | not measured¹ | — |
 | `fbcsp_lda` | classical | 0.559 ± 0.113 | 0.563 ± 0.010 | 0.126 |
 | `bandpower_rf` | classical | 0.538 ± 0.106 | 0.536 ± 0.009 | 0.072 |
 
@@ -44,6 +44,15 @@ The top three are **neural and statistically indistinguishable**: ShallowConvNet
 entirely, and EEGNet's 0.628 sits inside both intervals. Treat them as a tier,
 not a ranking — the honest statement is that all three beat the best classical
 pipeline by 2–3 points, not that ShallowConvNet is "the winner" by 0.001.
+
+One classical result is worth noting on its own: **the filter bank is what makes
+the Riemannian approach transfer between people.** Single-band tangent space
+reaches only 0.578 cross-subject, and per-recording recentring barely helps
+(0.580) — but computing tangent-space features per sub-band and concatenating
+them jumps to 0.609, level with CSP+LDA and with the tightest confidence
+interval of any pipeline here (±0.006). The within-subject ordering is the
+reverse, where the single-band version wins (0.626 vs 0.593), because the
+filter bank's extra parameters cannot be fitted from ~36 trials.
 
 **The two columns invert, and that is the most useful thing in the table.** The
 neural models take the top two cross-subject places (ShallowConvNet 0.640,
