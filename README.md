@@ -27,17 +27,23 @@ Chance = 50.0%. Full record in `reports/benchmark_v3.json`.
 | Pipeline | Type | Within-subject | Cross-subject | κ (cross) |
 |---|---|---|---|---|
 | `shallownet` | neural | not measured¹ | **0.640 ± 0.022** | 0.280 |
+| `conformer` | neural | not measured¹ | 0.639 ± 0.027 | 0.277 |
 | `eegnet` | neural | 0.526 ± 0.087 | 0.628 ± 0.027 | 0.256 |
 | `csp_lda` | classical | 0.606 ± 0.174 | 0.611 ± 0.023 | 0.222 |
 | `riemann_ts_aligned` | classical | **0.631 ± 0.161** | 0.580 ± 0.007 | 0.161 |
 | `riemann_ts` | classical | 0.626 ± 0.155 | 0.578 ± 0.015 | 0.156 |
-| `conformer` | neural | not measured¹ | RESULT_CONFORMER | — |
 | `fb_riemann_ts` | classical | 0.593 ± 0.137 | not measured¹ | — |
 | `fbcsp_lda` | classical | 0.559 ± 0.113 | 0.563 ± 0.010 | 0.126 |
 | `bandpower_rf` | classical | 0.538 ± 0.106 | 0.536 ± 0.009 | 0.072 |
 
 ¹ Not run — omitted rather than estimated. Fill any cell with e.g.
 `bwt benchmark --pipelines shallownet --protocols within_subject`.
+
+The top three are **neural and statistically indistinguishable**: ShallowConvNet
+0.640 (95% CI 0.621–0.660) and Conformer 0.639 (0.615–0.662) overlap almost
+entirely, and EEGNet's 0.628 sits inside both intervals. Treat them as a tier,
+not a ranking — the honest statement is that all three beat the best classical
+pipeline by 2–3 points, not that ShallowConvNet is "the winner" by 0.001.
 
 **The two columns invert, and that is the most useful thing in the table.** The
 neural models take the top two cross-subject places (ShallowConvNet 0.640,

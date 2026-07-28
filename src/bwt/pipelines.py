@@ -412,10 +412,12 @@ TRANSDUCTIVE_PIPELINES = frozenset({"riemann_ts_aligned"})
 #: Chosen over the full 105-subject benchmark; see `bwt benchmark` and the
 #: results table in the README.
 #:
-#: CSP+LDA is **not** the most accurate pipeline. `shallownet` is
-#: (0.640 cross-subject against CSP+LDA's 0.611), and cross-subject is the
-#: regime a shipped artifact actually operates in -- fitted on the training
-#: subjects, then applied to someone it has never seen.
+#: CSP+LDA is **not** the most accurate pipeline. All three neural models beat
+#: it cross-subject -- `shallownet` 0.640, `conformer` 0.639, `eegnet` 0.628
+#: against its 0.611 -- and cross-subject is the regime a shipped artifact
+#: actually operates in: fitted on the training subjects, then applied to
+#: someone it has never seen. (Those three overlap in confidence interval and
+#: should be read as a tier rather than a ranking.)
 #:
 #: It is the default anyway because a default must work on a bare install:
 #: PyTorch is an optional dependency here, so defaulting to a neural pipeline
