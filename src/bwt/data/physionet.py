@@ -28,8 +28,24 @@ https://physionet.org/content/eegmmidb/1.0.0/. The archive ships a
 against it, so the data is known-authentic and uncorrupted. Re-check at any time
 with ``bwt verify-data``.
 
-Reference: Schalk et al. (2004), "BCI2000: A General-Purpose Brain-Computer
-Interface (BCI) System", IEEE TBME 51(6):1034-1043.
+The archive's own documentation confirms the protocol encoded below: 109
+subjects, 64 channels on the international 10-10 system at 160 Hz, fourteen runs
+(two baselines plus three repetitions of four tasks), and ``T0`` = rest,
+``T1`` = left fist in tasks 1-2 / both fists in tasks 3-4, ``T2`` = right fist /
+both feet.
+
+Note what the documentation does **not** contain: any errata or warning about
+damaged records. The exclusion of S088, S089, S092 and S100 below was derived
+empirically by auditing the EDF headers in this repository, not taken from
+upstream.
+
+Using this dataset requires citing all three of:
+  * Schalk, G., McFarland, D.J., Hinterberger, T., Birbaumer, N., Wolpaw, J.R.
+    (2004), "BCI2000: A General-Purpose Brain-Computer Interface (BCI) System",
+    IEEE TBME 51(6):1034-1043.
+  * www.bci2000.org
+  * Goldberger, A.L. et al. (2000), "PhysioBank, PhysioToolkit, and PhysioNet",
+    Circulation 101(23):e215-e220.
 """
 
 from __future__ import annotations

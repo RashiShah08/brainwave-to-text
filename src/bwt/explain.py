@@ -36,7 +36,11 @@ MOTOR_CHANNELS = ("C3", "Cz", "C4")
 
 
 def _montage_info(ch_names: Sequence[str], sfreq: float):
-    """Build an MNE info object with 10-05 sensor positions attached."""
+    """Build an MNE info object with sensor positions attached.
+
+    The cap is 10-10; ``standard_1005`` is used only as the position lookup,
+    since 10-05 is a superset containing every 10-10 site.
+    """
     import mne
 
     info = mne.create_info(list(ch_names), sfreq, ch_types="eeg")

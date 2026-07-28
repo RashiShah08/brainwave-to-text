@@ -246,7 +246,12 @@ def concat_bundles(bundles: Sequence[EpochBundle]) -> EpochBundle:
 
 
 def read_standardised_raw(path: Path):
-    """Read one EDF and normalise its channel naming to the 10-05 system.
+    """Read one EDF and normalise its channel naming to standard 10-10 labels.
+
+    The electrodes follow the international **10-10** system, per the dataset
+    documentation. MNE's ``standard_1005`` montage is used to supply their
+    positions because 10-05 is a superset that contains every 10-10 site; the
+    montage is the position lookup, not a claim about the cap.
 
     The EEGMMIDB files label channels ``Fc5.``, ``Cz..``, ``Iz..`` and so on.
     ``mne.datasets.eegbci.standardize`` rewrites those to canonical names

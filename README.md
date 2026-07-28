@@ -569,10 +569,23 @@ so a GPU-trained artifact loads anywhere.
 
 ---
 
+## Citing the data
+
+The EEGMMIDB terms require **all three** of the following when the dataset is
+used. They are not optional.
+
+- Schalk, G., McFarland, D.J., Hinterberger, T., Birbaumer, N., Wolpaw, J.R.
+  (2004). BCI2000: A General-Purpose Brain-Computer Interface (BCI) System.
+  *IEEE Transactions on Biomedical Engineering* 51(6):1034–1043.
+- [www.bci2000.org](http://www.bci2000.org)
+- Goldberger, A.L. et al. (2000). PhysioBank, PhysioToolkit, and PhysioNet.
+  *Circulation* 101(23):e215–e220.
+
+Source: <https://archive.physionet.org/pn4/eegmmidb/>. Verify your copy with
+`bwt verify-data`.
+
 ## References
 
-- Schalk et al. (2004). BCI2000: A General-Purpose Brain-Computer Interface System. *IEEE TBME* 51(6).
-- Goldberger et al. (2000). PhysioBank, PhysioToolkit, and PhysioNet. *Circulation* 101(23).
 - Brunner et al. (2008). BCI Competition 2008 – Graz data set A.
 - Ang et al. (2008). Filter Bank Common Spatial Pattern (FBCSP) in BCI. *IJCNN*.
 - Barachant et al. (2012). Multiclass BCI Classification by Riemannian Geometry. *IEEE TBME* 59(4).
