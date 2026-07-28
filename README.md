@@ -57,6 +57,22 @@ The practical reading: **use a neural model when serving strangers, a Riemannian
 one when you can calibrate on the user.** That is also why calibration
 fine-tunes a population model rather than training per subject from scratch.
 
+**`csp_lda` remains the default despite `shallownet` being more accurate.** A
+default has to work on a bare install, and PyTorch is optional here — defaulting
+to a neural pipeline would make `bwt train` fail for anyone who skipped a 2 GB
+CUDA download. CSP+LDA needs no GPU, trains in seconds, and gives up about three
+points. Choose deliberately:
+
+| Situation | Pipeline | Accuracy |
+|---|---|---|
+| Serving strangers, PyTorch available | `shallownet` | 0.640 cross-subject |
+| Serving strangers, no PyTorch | `csp_lda` | 0.611 cross-subject |
+| Calibrated on the end user | `riemann_ts_aligned` | 0.631 within-subject |
+
+```bash
+bwt train --pipeline shallownet
+```
+
 **The two columns answer different questions.**
 
 - **Within-subject** is what a user gets once the system is calibrated on their

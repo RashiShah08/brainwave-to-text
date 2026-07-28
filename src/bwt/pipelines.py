@@ -409,15 +409,25 @@ DEEP_PIPELINES = frozenset({"eegnet", "shallownet", "conformer"})
 #: model card so the serving layer can warn when handed a single epoch.
 TRANSDUCTIVE_PIPELINES = frozenset({"riemann_ts_aligned"})
 
-#: Chosen empirically over the full 105-subject benchmark; see `bwt benchmark`
-#: and the results table in the README.
+#: Chosen over the full 105-subject benchmark; see `bwt benchmark` and the
+#: results table in the README.
 #:
-#: CSP+LDA is the default because it is the best *cross-subject* performer
-#: (0.611 vs 0.578 for `riemann_ts`), and cross-subject is the regime a shipped
-#: artifact actually operates in: it is fitted on the training subjects and then
-#: applied to a person it has never seen. The Riemannian pipelines score higher
-#: within-subject (0.631 for `riemann_ts_aligned`) and are the better choice
-#: when the model is calibrated on its end user's own recordings.
+#: CSP+LDA is **not** the most accurate pipeline. `shallownet` is
+#: (0.640 cross-subject against CSP+LDA's 0.611), and cross-subject is the
+#: regime a shipped artifact actually operates in -- fitted on the training
+#: subjects, then applied to someone it has never seen.
+#:
+#: It is the default anyway because a default must work on a bare install:
+#: PyTorch is an optional dependency here, so defaulting to a neural pipeline
+#: would make `bwt train` fail out of the box for anyone who skipped a 2 GB
+#: CUDA download. CSP+LDA needs no GPU, trains in seconds, and gives up ~3
+#: points.
+#:
+#: Pick deliberately:
+#:   * serving strangers, PyTorch available -> `shallownet` (0.640)
+#:   * serving strangers, no PyTorch        -> `csp_lda`    (0.611)
+#:   * calibrated on the end user           -> `riemann_ts_aligned` (0.631
+#:     within-subject; the neural models collapse to ~0.53 on ~36 trials)
 DEFAULT_PIPELINE = "csp_lda"
 
 
