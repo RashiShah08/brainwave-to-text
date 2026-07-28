@@ -29,11 +29,10 @@ Three strategies:
 from __future__ import annotations
 
 import time
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
-from typing import Callable, Sequence
 
 import numpy as np
-from sklearn.base import clone
 from sklearn.metrics import accuracy_score, cohen_kappa_score
 from sklearn.model_selection import StratifiedShuffleSplit
 
@@ -260,7 +259,7 @@ def calibration_curve(
                         else:
                             raise ValueError(f"unknown strategy {strategy!r}")
                         pred = adapted.predict(X_ev)
-                    except Exception as exc:  # noqa: BLE001
+                    except Exception as exc:
                         log.warning("  %s @ n=%d failed: %s", strategy, budget, exc)
                         continue
 

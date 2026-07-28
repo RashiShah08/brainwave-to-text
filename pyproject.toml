@@ -47,3 +47,45 @@ markers = [
     "slow: marks tests that touch the real dataset (deselect with '-m \"not slow\"')",
 ]
 filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # import ordering
+    "B",        # bugbear
+    "UP",       # pyupgrade
+    "C4",       # comprehensions
+    "SIM",      # simplification
+    "RUF",      # ruff-specific
+]
+ignore = [
+    "E501",    # line length is handled by the formatter, not enforced here
+    "B008",    # function call in default arg: intentional for factory defaults
+    "SIM108",  # ternaries are not always clearer than if/else
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests import inside functions deliberately, to keep optional dependencies
+# (torch, moabb) from being imported at collection time.
+"tests/*" = ["E402", "F401"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["bwt"]
+
+[tool.coverage.run]
+source = ["src/bwt"]
+omit = ["*/serving/app.py"]  # exercised through the Flask test client
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]

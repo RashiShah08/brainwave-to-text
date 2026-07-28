@@ -29,7 +29,7 @@ decoding:
 
 from __future__ import annotations
 
-from typing import Callable, Sequence
+from collections.abc import Callable, Sequence
 
 import numpy as np
 from scipy.signal import butter, sosfiltfilt

@@ -22,11 +22,10 @@ Every split is checked by :func:`assert_no_subject_leakage` before it is used.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field, asdict
-from typing import Callable, Sequence
+from collections.abc import Callable, Sequence
+from dataclasses import asdict, dataclass, field
 
 import numpy as np
-from sklearn.base import clone
 from sklearn.metrics import (
     accuracy_score,
     balanced_accuracy_score,

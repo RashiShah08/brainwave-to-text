@@ -64,7 +64,10 @@ def _subject_list(value: str | None) -> list[int] | None:
 
 def _evaluate(bundle, pipeline_name, protocols, splits, n_jobs, permutations):
     from bwt.evaluation import (
-        cross_subject_cv, permutation_test, session_holdout, within_subject_cv,
+        cross_subject_cv,
+        permutation_test,
+        session_holdout,
+        within_subject_cv,
     )
     from bwt.pipelines import pipeline_factory
 
@@ -114,7 +117,10 @@ def _evaluate(bundle, pipeline_name, protocols, splits, n_jobs, permutations):
 
 def cmd_info(args) -> int:
     from bwt.data.physionet import (
-        EXCLUDED_SUBJECTS, RUN_PROTOCOL, TASKS, available_subjects,
+        EXCLUDED_SUBJECTS,
+        RUN_PROTOCOL,
+        TASKS,
+        available_subjects,
     )
 
     root = raw_data_dir()
@@ -222,44 +228,88 @@ def cmd_evaluate(args) -> int:
 
 
 def cmd_benchmark(args) -> int:
-    from bwt.pipelines import REGISTRY
+    """Resumable benchmark: checkpoints every fold, so it can be interrupted."""
+    from bwt.benchmarking import (
+        CheckpointStore,
+        assemble,
+        execute,
+        plan,
+        progress,
+    )
+    from bwt.pipelines import REGISTRY, pipeline_factory
 
     ensure_dirs()
     bundle = _load_bundle(args)
     print(bundle.summary())
 
     names = args.pipelines or sorted(REGISTRY)
+    protocols = list(args.protocols)
+    store = CheckpointStore(
+        Path(args.checkpoint or reports_dir() /
+             f"bench_state_{args.dataset}_{args.task}.json")
+    )
+    items = plan(bundle, names, protocols, n_splits=args.cv_splits)
+
+    def factory_for(name: str):
+        return pipeline_factory(
+            name, sfreq=bundle.sfreq, n_classes=len(bundle.classes)
+        )
+
+    outstanding = sum(1 for i in items if not store.has(i))
+    print(f"{len(items)} fold(s) planned, {outstanding} outstanding"
+          + (f", budget {args.time_budget:.0f}s" if args.time_budget else ""))
+
+    counts = {"done": 0, "cached": 0, "skipped": 0, "error": 0}
+    for _, status in execute(bundle, items, store, factory_for,
+                             n_splits=args.cv_splits,
+                             time_budget=args.time_budget):
+        counts[status] += 1
+
+    # Summarise whatever is complete so far.
     table: dict[str, dict] = {}
     for name in names:
-        try:
-            results = _evaluate(
-                bundle, name, list(args.protocols), args.cv_splits,
-                args.n_jobs, 0,
-            )
-            table[name] = {k: v.to_dict() for k, v in results.items()}
-        except Exception as exc:  # noqa: BLE001
-            log.error("%s failed: %s", name, exc)
-            table[name] = {"error": str(exc)}
+        for protocol in protocols:
+            result = assemble(bundle, store, name, protocol)
+            if result is not None:
+                table.setdefault(name, {})[protocol] = result.to_dict()
 
-    out = Path(args.output or reports_dir() / f"benchmark_{args.task}.json")
+    out = Path(args.output or reports_dir() /
+               f"benchmark_{args.dataset}_{args.task}.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(
-        {"task": args.task, "bundle": bundle.metadata(), "results": table}, indent=2))
+        {"task": args.task, "dataset": args.dataset,
+         "bundle": bundle.metadata(), "results": table}, indent=2, default=float))
 
-    print(f"\n{'pipeline':22s} {'within-subject':>18s} {'cross-subject':>18s}")
-    print("-" * 62)
-    for name, entry in table.items():
+    done = progress(items, store)
+    print(f"\n{'pipeline':22s} {'within-subject':>20s} {'cross-subject':>20s}")
+    print("-" * 66)
+    for name in names:
         cells = []
         for protocol in ("within_subject", "cross_subject"):
-            payload = entry.get(protocol, {})
-            if "mean_accuracy" in payload:
-                cells.append(
-                    f"{payload['mean_accuracy']:.4f} +/-{payload['std_accuracy']:.3f}"
-                )
+            payload = table.get(name, {}).get(protocol)
+            complete = done.get(name, {}).get(protocol, [0, 0])
+            if payload and complete[0] >= complete[1]:
+                cells.append(f"{payload['mean_accuracy']:.4f} "
+                             f"+/-{payload['std_accuracy']:.3f}")
+            elif payload:
+                cells.append(f"{payload['mean_accuracy']:.4f} "
+                             f"({complete[0]}/{complete[1]})")
+            elif protocol in protocols:
+                cells.append(f"pending ({complete[0]}/{complete[1]})")
             else:
                 cells.append("-")
-        print(f"{name:22s} {cells[0]:>18s} {cells[1]:>18s}")
-    print(f"\nchance = {1.0 / len(bundle.classes):.4f};  wrote {out}")
+        print(f"{name:22s} {cells[0]:>20s} {cells[1]:>20s}")
+
+    remaining = sum(1 for i in items if not store.has(i))
+    print(f"\nchance = {1.0 / len(bundle.classes):.4f}")
+    print(f"folds: {counts['done']} run, {counts['cached']} cached, "
+          f"{counts['skipped']} skipped, {counts['error']} failed")
+    print(f"wrote {out}")
+    if remaining:
+        print(f"\n{remaining} fold(s) outstanding -- re-run the same command "
+              "to continue from the checkpoint.")
+    else:
+        print("\nbenchmark complete.")
     return 0
 
 
@@ -306,7 +356,7 @@ def cmd_datasets(args) -> int:
         if source is not None:
             try:
                 print(f"  subjects present: {len(source.subjects())}")
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 print(f"  subjects present: unknown ({exc})")
         else:
             print("  subjects: downloaded on first use via MOABB")
@@ -412,7 +462,7 @@ def cmd_explain(args) -> int:
         csp_path = csp_patterns(model, card,
                                 output=out_dir / f"csp_{card.task}.png")
         print(f"\nCSP patterns -> {csp_path}")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"\nCSP patterns skipped: {exc}")
 
     summary = out_dir / f"explain_{args.task}.json"
@@ -535,11 +585,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output", default=None)
     p.set_defaults(func=cmd_evaluate)
 
-    p = sub.add_parser("benchmark", help="compare all pipelines")
+    p = sub.add_parser("benchmark",
+                       help="compare pipelines; resumable, checkpoints per fold")
     add_data_args(p)
     add_cv_args(p)
     p.add_argument("--pipelines", nargs="+", default=None, choices=sorted(REGISTRY))
     p.add_argument("--output", default=None)
+    p.add_argument("--checkpoint", default=None,
+                   help="fold-level checkpoint file; defaults to "
+                        "reports/bench_state_<dataset>_<task>.json")
+    p.add_argument("--time-budget", type=float, default=None,
+                   help="stop cleanly after this many seconds, at a fold "
+                        "boundary; re-run to continue")
     p.set_defaults(func=cmd_benchmark)
 
     p = sub.add_parser("predict", help="decode one EDF recording")
@@ -613,7 +670,7 @@ def main(argv: list[str] | None = None) -> int:
     except FileNotFoundError as exc:
         log.error("%s", exc)
         return 2
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         log.error("%s: %s", type(exc).__name__, exc)
         if args.log_level == "DEBUG":
             raise

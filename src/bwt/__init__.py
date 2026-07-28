@@ -21,4 +21,4 @@ __version__ = "3.0.0"
 # that stale artifacts are rejected loudly instead of silently mispredicting.
 ARTIFACT_SCHEMA_VERSION = 2
 
-__all__ = ["__version__", "ARTIFACT_SCHEMA_VERSION"]
+__all__ = ["ARTIFACT_SCHEMA_VERSION", "__version__"]

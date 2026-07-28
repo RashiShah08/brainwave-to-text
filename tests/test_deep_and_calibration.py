@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from tests.conftest import make_epochs
 
 from bwt.deep import torch_available
-from tests.conftest import make_epochs
 
 torch = pytest.importorskip("torch") if torch_available() else None
 pytestmark = pytest.mark.skipif(not torch_available(), reason="PyTorch not installed")

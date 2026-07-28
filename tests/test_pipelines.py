@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from sklearn.base import clone
+from tests.conftest import make_epochs
 
 from bwt.pipelines import (
     REGISTRY,
@@ -14,7 +15,6 @@ from bwt.pipelines import (
     build_pipeline,
     pipeline_factory,
 )
-from tests.conftest import make_epochs
 
 
 class TestBandpassFilter:

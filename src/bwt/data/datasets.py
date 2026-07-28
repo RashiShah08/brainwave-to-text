@@ -24,8 +24,8 @@ Registered datasets
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Iterable, Sequence
 
 import numpy as np
 
@@ -93,7 +93,7 @@ class Dataset(ABC):
         def _one(subject: int):
             try:
                 return self.load_subject(subject, task, tmin, tmax)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 log.warning("%s subject %s failed: %s", self.name, subject, exc)
                 return None
 
@@ -377,7 +377,7 @@ def load_bundle(
             bundle = EpochBundle.load(cache_path)
             log.info("loaded cached epochs: %s", bundle.summary())
             return bundle
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning("ignoring unreadable cache %s (%s)", cache_path.name, exc)
 
     bundle = source.load(task, subjects=chosen, tmin=tmin, tmax=tmax,
@@ -393,9 +393,9 @@ def load_bundle(
 
 __all__ = [
     "DEFAULT_DATASET",
+    "EEGMMIDB",
     "BNCI2a",
     "Dataset",
-    "EEGMMIDB",
     "available_tasks",
     "get_dataset",
     "list_datasets",

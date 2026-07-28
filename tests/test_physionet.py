@@ -133,7 +133,7 @@ class TestTasks:
 class TestExclusions:
     def test_known_bad_subjects_are_excluded(self):
         # 88/92/100 are 128 Hz; 89 has corrupt baseline annotations.
-        assert EXCLUDED_SUBJECTS == frozenset({88, 89, 92, 100})
+        assert frozenset({88, 89, 92, 100}) == EXCLUDED_SUBJECTS
 
     def test_available_subjects_omits_excluded(self, real_data_root):
         usable = available_subjects(real_data_root)
@@ -142,7 +142,7 @@ class TestExclusions:
 
     def test_include_excluded_returns_them(self, real_data_root):
         every = available_subjects(real_data_root, include_excluded=True)
-        assert EXCLUDED_SUBJECTS <= set(every)
+        assert set(every) >= EXCLUDED_SUBJECTS
 
     def test_missing_root_returns_empty(self, tmp_path):
         assert available_subjects(tmp_path / "nope") == []

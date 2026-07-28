@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (py${{ matrix.python }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install -e .
+
+      # The dataset is 3.5 GB and is not in the repository, so CI runs the
+      # hermetic suite only. Those tests generate synthetic epochs with a real
+      # learnable class difference and write synthetic EDF files, so they still
+      # exercise the MNE reader, the pipelines and the HTTP layer end to end.
+      # Tests needing the corpus are marked `slow` and skip themselves anyway;
+      # -m "not slow" makes that explicit rather than incidental.
+      - name: Test
+        run: pytest -m "not slow" --cov=bwt --cov-report=xml -q
+
+      - name: Upload coverage
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff==0.14.2
+      - run: ruff check src tests
+
+  deep:
+    name: neural pipelines (CPU torch)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install with CPU-only torch
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e .
+      - name: Test neural estimators
+        run: pytest tests/test_deep_and_calibration.py -m "not slow" -q
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build serving image
+        run: docker build -t bwt:ci .

@@ -43,7 +43,7 @@ def _library_versions() -> dict[str, str]:
     for module in ("numpy", "scipy", "sklearn", "mne", "pyriemann", "joblib"):
         try:
             versions[module] = __import__(module).__version__
-        except Exception:  # noqa: BLE001
+        except Exception:
             versions[module] = "not-installed"
     return versions
 
@@ -55,7 +55,7 @@ def _git_commit() -> str | None:
             capture_output=True, text=True, timeout=5, check=False,
         )
         return out.stdout.strip() or None
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
 
 
@@ -107,7 +107,7 @@ class ModelCard:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, payload: dict) -> "ModelCard":
+    def from_dict(cls, payload: dict) -> ModelCard:
         known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
         return cls(**{k: v for k, v in payload.items() if k in known})
 
@@ -211,7 +211,7 @@ def list_artifacts(root: Path | None = None) -> list[tuple[Path, ModelCard]]:
                 (entry, ModelCard.from_dict(
                     json.loads(card_file.read_text(encoding="utf-8"))))
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning("skipping unreadable card %s (%s)", card_file, exc)
     return sorted(found, key=lambda pair: pair[1].created_utc, reverse=True)
 

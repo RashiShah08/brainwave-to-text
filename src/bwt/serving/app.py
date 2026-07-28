@@ -242,7 +242,7 @@ def _register_routes(app: Flask) -> None:
                 yield _json.dumps({"type": "end", "n_windows": emitted}) + "\n"
             except InputContractError as exc:
                 yield _json.dumps({"type": "error", "message": str(exc)}) + "\n"
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("streaming failed")
                 yield _json.dumps({
                     "type": "error",

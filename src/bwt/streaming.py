@@ -20,9 +20,9 @@ from __future__ import annotations
 
 import math
 import time
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterator, Sequence
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterator, Sequence
 
 import numpy as np
 

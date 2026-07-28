@@ -74,4 +74,4 @@ def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)
 
 
-__all__ = ["setup_logging", "get_logger"]
+__all__ = ["get_logger", "setup_logging"]

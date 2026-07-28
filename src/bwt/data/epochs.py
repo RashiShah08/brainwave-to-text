@@ -15,11 +15,10 @@ Design rules enforced here:
 
 from __future__ import annotations
 
-import hashlib
 import json
-from dataclasses import dataclass, asdict
+from collections.abc import Sequence
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
 
 import numpy as np
 
@@ -27,13 +26,11 @@ from bwt.data.physionet import (
     EXPECTED_N_CHANNELS,
     EXPECTED_SFREQ,
     TaskSpec,
-    available_subjects,
     edf_path,
     get_task,
-    subject_id,
 )
 from bwt.logging_utils import get_logger
-from bwt.paths import cache_dir, raw_data_dir
+from bwt.paths import raw_data_dir
 
 log = get_logger(__name__)
 
@@ -115,7 +112,7 @@ class EpochBundle:
             name: int((self.y == i).sum()) for i, name in enumerate(self.classes)
         }
 
-    def subset(self, mask: np.ndarray) -> "EpochBundle":
+    def subset(self, mask: np.ndarray) -> EpochBundle:
         """Return a new bundle restricted to ``mask`` (boolean or index array)."""
         return EpochBundle(
             X=self.X[mask],
@@ -131,7 +128,7 @@ class EpochBundle:
             units=self.units,
         )
 
-    def for_subject(self, subject: int) -> "EpochBundle":
+    def for_subject(self, subject: int) -> EpochBundle:
         return self.subset(self.groups == subject)
 
     def metadata(self) -> dict:
@@ -185,7 +182,7 @@ class EpochBundle:
         tmp.replace(path)
 
     @classmethod
-    def load(cls, path: Path) -> "EpochBundle":
+    def load(cls, path: Path) -> EpochBundle:
         with np.load(path, allow_pickle=False) as handle:
             meta = json.loads(str(handle["meta"]))
             if meta.get("cache_version") != CACHE_VERSION:
@@ -361,7 +358,7 @@ def load_subject_epochs(
             raw = read_standardised_raw(path)
             _validate_raw(raw, path)
             epochs = epochs_from_raw(raw, task, run, tmin=tmin, tmax=tmax)
-        except Exception as exc:  # noqa: BLE001 - one bad run must not kill a run of 105
+        except Exception as exc:
             log.warning("%s: %s", path.name, exc)
             if strict:
                 raise
@@ -410,8 +407,8 @@ def load_subject_epochs(
 
 __all__ = [
     "CACHE_VERSION",
-    "DEFAULT_TMIN",
     "DEFAULT_TMAX",
+    "DEFAULT_TMIN",
     "EpochBundle",
     "concat_bundles",
     "epochs_from_raw",

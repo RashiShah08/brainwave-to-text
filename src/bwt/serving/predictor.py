@@ -12,9 +12,9 @@ first-second window, and no way to notice.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Sequence
 
 import numpy as np
 
@@ -119,7 +119,7 @@ class Predictor:
 
     @classmethod
     def load(cls, spec: str | Path | None = None, *,
-             strict_versions: bool = False, max_epochs: int = 256) -> "Predictor":
+             strict_versions: bool = False, max_epochs: int = 256) -> Predictor:
         path = resolve_artifact(spec)
         model, card = load_artifact(path, strict_versions=strict_versions)
         return cls(model, card, name=path.name, max_epochs=max_epochs)

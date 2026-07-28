@@ -299,7 +299,7 @@ class TorchClassifier(BaseEstimator, ClassifierMixin):
 
     # -- transfer learning -------------------------------------------------- #
 
-    def clone_for_finetuning(self, freeze_features: bool = False) -> "TorchClassifier":
+    def clone_for_finetuning(self, freeze_features: bool = False) -> TorchClassifier:
         """Copy this fitted model so it can be adapted to a new subject.
 
         Used by :mod:`bwt.calibration`. With ``freeze_features`` only the final

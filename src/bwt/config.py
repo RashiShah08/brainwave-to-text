@@ -61,7 +61,7 @@ class Config:
     # -- construction ----------------------------------------------------- #
 
     @classmethod
-    def load(cls, path: Path | str | None = None) -> "Config":
+    def load(cls, path: Path | str | None = None) -> Config:
         config = cls()
         path = Path(path) if path else configs_dir() / "default.yaml"
         if path.is_file():
@@ -71,7 +71,7 @@ class Config:
             config = config.merged(payload)
         return config.with_env()
 
-    def merged(self, payload: dict[str, Any]) -> "Config":
+    def merged(self, payload: dict[str, Any]) -> Config:
         current = asdict(self)
         for section, values in (payload or {}).items():
             if section in current and isinstance(values, dict):
@@ -79,14 +79,14 @@ class Config:
         return self._from_dict(current)
 
     @classmethod
-    def _from_dict(cls, payload: dict[str, Any]) -> "Config":
+    def _from_dict(cls, payload: dict[str, Any]) -> Config:
         return cls(
             data=DataConfig(**payload.get("data", {})),
             train=TrainConfig(**payload.get("train", {})),
             serve=ServeConfig(**payload.get("serve", {})),
         )
 
-    def with_env(self) -> "Config":
+    def with_env(self) -> Config:
         """Apply ``BWT_<SECTION>_<FIELD>`` environment overrides."""
         current = asdict(self)
         for section_name, section in (

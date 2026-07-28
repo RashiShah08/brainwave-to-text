@@ -25,7 +25,6 @@ import math
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 def _scaled(reference_samples: int, reference_sfreq: float, sfreq: float,
