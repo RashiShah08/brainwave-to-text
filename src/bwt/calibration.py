@@ -74,17 +74,29 @@ class CalibrationResult:
                 out.setdefault(point.n_calibration_trials, []).append(point.accuracy)
         return dict(sorted(out.items()))
 
+    def _points(self, strategy: str) -> dict[int, list[CalibrationPoint]]:
+        out: dict[int, list[CalibrationPoint]] = {}
+        for point in self.points:
+            if point.strategy == strategy:
+                out.setdefault(point.n_calibration_trials, []).append(point)
+        return dict(sorted(out.items()))
+
     def summary_table(self) -> list[dict]:
         rows = []
         for strategy in STRATEGIES:
-            for budget, values in self.by_budget(strategy).items():
-                arr = np.asarray(values)
+            for budget, points in self._points(strategy).items():
+                arr = np.asarray([p.accuracy for p in points])
                 rows.append({
                     "strategy": strategy,
                     "n_calibration_trials": budget,
                     "mean_accuracy": float(arr.mean()),
                     "std_accuracy": float(arr.std(ddof=1)) if len(arr) > 1 else 0.0,
-                    "n_subjects": len(arr),
+                    # Distinguished deliberately: every budget above zero is
+                    # repeated `n_splits` times per subject, so the number of
+                    # measurements is a multiple of the number of people. Only
+                    # the subject count says how much the estimate generalises.
+                    "n_subjects": len({p.subject for p in points}),
+                    "n_measurements": len(arr),
                 })
         return rows
 
@@ -107,7 +119,8 @@ class CalibrationResult:
                 f"  {row['strategy']:9s} n={row['n_calibration_trials']:3d} "
                 f"acc={row['mean_accuracy']:.4f} "
                 f"+/-{row['std_accuracy']:.4f} "
-                f"({row['n_subjects']} subjects)"
+                f"({row['n_subjects']} subjects, "
+                f"{row['n_measurements']} measurements)"
             )
         return "\n".join(lines)
 

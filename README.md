@@ -69,10 +69,45 @@ could not have worked no matter how the classifier was tuned.
 
 ### Per-user calibration
 
-CALIBRATION_TABLE
+Adapting a population model to the individual is the standard way to make a BCI
+usable, so it is worth stating plainly that **on this dataset it did not help.**
 
-Adapting a population model to the individual is the single largest lever. See
-`bwt calibrate --help`.
+`csp_lda`, 9 subjects, `refit` = train from scratch on the subject's own trials:
+
+| Calibration trials | Strategy | Accuracy |
+|---|---|---|
+| 0 | population model | **0.625 ± 0.158** |
+| 5 | refit | 0.514 ± 0.107 |
+| 10 | refit | 0.503 ± 0.151 |
+| 20 | refit | 0.567 ± 0.133 |
+| 40 | refit | 0.563 ± 0.248 |
+
+`eegnet`, 3 subjects, `finetune` = adapt the pretrained population model:
+
+| Calibration trials | Strategy | Accuracy |
+|---|---|---|
+| 0 | population model | 0.622 ± 0.044 |
+| 20 | finetune | 0.620 ± 0.042 |
+| 40 | finetune | 0.633 ± 0.151 |
+
+Two findings, both negative, both worth keeping:
+
+1. **Refitting from scratch is strictly worse than not calibrating at all.**
+   Forty trials cannot support fitting CSP + LDA from nothing, so the population
+   model wins at every budget. This is the empirical argument for fine-tuning
+   over refitting.
+2. **Fine-tuning gained ~1 point, inside the noise.** With three subjects and a
+   0.15 standard deviation, that is not a real effect.
+
+The likely reason is a ceiling in the corpus rather than in the method:
+EEGMMIDB provides only ~45 imagined left/right trials per subject, so a 40-trial
+calibration set consumes nearly everything and leaves almost nothing to evaluate
+on. Published calibration gains come from datasets like BCI IV-2a with 288 trials
+per session. Testing that properly needs the remaining IV-2a subjects, which had
+not finished downloading.
+
+Reproduce with `bwt calibrate --pipeline eegnet --budgets 0 5 10 20 40`. Both
+curves are in `reports/calibration.json`.
 
 ### Evidence accumulation
 
@@ -440,8 +475,11 @@ so a GPU-trained artifact loads anywhere.
 - **The speller is a demonstrator.** Evidence accumulation makes it far more
   usable, but at a real cost in time per character, and only for repeated
   independent trials.
-- **Cross-subject transfer is weak** without calibration. Real deployments
-  calibrate per user.
+- **Cross-subject transfer is weak, and calibration did not fix it here.**
+  Measured on EEGMMIDB, refitting per subject was worse than the population
+  model and fine-tuning gained about a point, inside the noise. That is a
+  finding about this corpus's 45-trials-per-subject ceiling as much as about the
+  method, but it is what was measured.
 - **Sliding-window accumulation amplifies bias** rather than averaging out
   noise, because overlapping windows share their errors.
 - **No online acquisition.** Streaming replays a recording; there is no driver
