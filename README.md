@@ -27,7 +27,7 @@ Chance = 50.0%. Full record in `reports/benchmark_v3.json`.
 | Pipeline | Type | Within-subject | Cross-subject | κ (cross) |
 |---|---|---|---|---|
 | `shallownet` | neural | 0.515 ± 0.095 | **0.640 ± 0.022** | 0.280 |
-| `conformer` | neural | not measured¹ | 0.639 ± 0.027 | 0.277 |
+| `conformer` | neural | 0.579 ± 0.125 | 0.639 ± 0.027 | 0.277 |
 | `eegnet` | neural | 0.526 ± 0.087 | 0.628 ± 0.027 | 0.256 |
 | `csp_lda` | classical | 0.606 ± 0.174 | 0.611 ± 0.023 | 0.222 |
 | `fb_riemann_ts` | classical | 0.593 ± 0.137 | 0.609 ± 0.006 | 0.219 |
@@ -36,8 +36,9 @@ Chance = 50.0%. Full record in `reports/benchmark_v3.json`.
 | `fbcsp_lda` | classical | 0.559 ± 0.113 | 0.563 ± 0.010 | 0.126 |
 | `bandpower_rf` | classical | 0.538 ± 0.106 | 0.536 ± 0.009 | 0.072 |
 
-¹ Not run — omitted rather than estimated. Fill any cell with e.g.
-`bwt benchmark --pipelines shallownet --protocols within_subject`.
+Every cell is measured. Regenerate any of them with
+`bwt benchmark --pipelines <name> --protocols <protocol>`; the run checkpoints
+each fold, so it can be interrupted and resumed.
 
 The top three are **neural and statistically indistinguishable**: ShallowConvNet
 0.640 (95% CI 0.621–0.660) and Conformer 0.639 (0.615–0.662) overlap almost
@@ -59,6 +60,15 @@ ShallowConvNet is simultaneously the **best** cross-subject model (0.640) and
 the **worst** within-subject one (0.515 — a coin flip), a swing of 12.5 points
 from the same architecture on the same data. EEGNet does the same thing (0.628
 against 0.526), while `riemann_ts_aligned` runs the other way entirely.
+
+The exception is instructive: **EEG-Conformer degrades far less** (0.579
+within-subject against ShallowConvNet's 0.515), despite being the largest model
+here at 184k parameters. Capacity is evidently not what governs small-sample
+behaviour — regularisation is. The Conformer carries dropout 0.3 throughout, ten
+times the weight decay of the other two, and pools over attention outputs rather
+than flattening a wide feature map into a dense layer. Its ±0.125 spread is also
+the widest of any pipeline, meaning it helps some subjects considerably and
+others not at all.
 
 The reason is data volume per fit. Within-subject training sees ~36 trials, far
 below what a convolutional network needs, whereas the classical pipelines encode

@@ -346,6 +346,32 @@ def cmd_predict(args) -> int:
     return 0
 
 
+def cmd_verify_data(args) -> int:
+    from bwt.data.physionet import verify_checksums
+
+    try:
+        result = verify_checksums(suffix=args.suffix, limit=args.limit)
+    except FileNotFoundError as exc:
+        print(f"cannot verify: {exc}")
+        return 2
+
+    print(f"checked    {result['checked']} file(s) matching {args.suffix!r}")
+    print(f"verified   {result['verified']}")
+    print(f"mismatched {len(result['mismatched'])}")
+    print(f"missing    {len(result['missing'])}")
+
+    for name in result["mismatched"][:20]:
+        print(f"  CORRUPT  {name}")
+    for name in result["missing"][:20]:
+        print(f"  MISSING  {name}")
+
+    if result["ok"]:
+        print("\nall files match the archive's SHA-256 manifest.")
+        return 0
+    print("\nintegrity check FAILED -- re-download the affected files.")
+    return 1
+
+
 def cmd_datasets(args) -> int:
     from bwt.data.datasets import get_dataset, list_datasets
 
@@ -606,6 +632,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-spell", action="store_true")
     p.add_argument("--limit", type=int, default=20)
     p.set_defaults(func=cmd_predict)
+
+    p = sub.add_parser("verify-data",
+                       help="check the recordings against the archive's SHA-256 manifest")
+    p.add_argument("--suffix", default=".edf",
+                   help="only verify files with this suffix ('' for all)")
+    p.add_argument("--limit", type=int, default=None,
+                   help="sample this many files instead of checking all")
+    p.set_defaults(func=cmd_verify_data)
 
     p = sub.add_parser("datasets", help="list datasets and their tasks")
     p.set_defaults(func=cmd_datasets)

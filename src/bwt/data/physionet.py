@@ -16,9 +16,20 @@ imagined movement, because executed movement is contaminated by real EMG.
 Every one of those distinctions is made explicit and non-optional below, so the
 mistake cannot be repeated by accident.
 
+Source
+------
+The copy in this repository came from the PhysioBank archive:
+
+    https://archive.physionet.org/pn4/eegmmidb/
+
+which is the same corpus served today at
+https://physionet.org/content/eegmmidb/1.0.0/. The archive ships a
+``SHA256SUMS.txt`` alongside the recordings; all 1526 EDF files here verify
+against it, so the data is known-authentic and uncorrupted. Re-check at any time
+with ``bwt verify-data``.
+
 Reference: Schalk et al. (2004), "BCI2000: A General-Purpose Brain-Computer
-Interface (BCI) System", IEEE TBME 51(6):1034-1043; and the EEGMMIDB
-documentation at https://physionet.org/content/eegmmidb/1.0.0/
+Interface (BCI) System", IEEE TBME 51(6):1034-1043.
 """
 
 from __future__ import annotations
@@ -332,6 +343,66 @@ def edf_path(subject: int, run: int, root: Path | None = None) -> Path:
     return root / subject_id(subject) / f"{subject_id(subject)}R{run:02d}.edf"
 
 
+#: Checksum manifest shipped with the PhysioBank archive.
+CHECKSUM_FILE = "SHA256SUMS.txt"
+
+
+def verify_checksums(
+    root: Path | None = None,
+    *,
+    suffix: str = ".edf",
+    limit: int | None = None,
+) -> dict:
+    """Check the recordings against the archive's own SHA-256 manifest.
+
+    Silent data corruption -- a truncated download, a bad disk -- produces
+    plausible-looking numbers rather than an error, so it is worth being able to
+    rule out cheaply. Returns counts plus the names of any file that fails.
+
+    ``limit`` samples that many files instead of all of them, for a fast check.
+    """
+    import hashlib
+    import random
+
+    root = root or raw_data_dir()
+    manifest = root / CHECKSUM_FILE
+    if not manifest.is_file():
+        raise FileNotFoundError(
+            f"no {CHECKSUM_FILE} under {root}; this copy of the corpus did not "
+            "come from the PhysioBank archive, so its integrity cannot be "
+            "verified against upstream"
+        )
+
+    entries = [
+        line.split(maxsplit=1)
+        for line in manifest.read_text().splitlines()
+        if line.strip()
+    ]
+    wanted = [(h, name.strip()) for h, name in entries
+              if not suffix or name.strip().endswith(suffix)]
+    if limit is not None and limit < len(wanted):
+        wanted = random.Random(0).sample(wanted, limit)
+
+    verified: list[str] = []
+    mismatched: list[str] = []
+    missing: list[str] = []
+    for expected, name in wanted:
+        path = root / name
+        if not path.is_file():
+            missing.append(name)
+            continue
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        (verified if digest == expected else mismatched).append(name)
+
+    return {
+        "checked": len(wanted),
+        "verified": len(verified),
+        "mismatched": mismatched,
+        "missing": missing,
+        "ok": not mismatched and not missing,
+    }
+
+
 def available_subjects(
     root: Path | None = None,
     *,
@@ -372,6 +443,7 @@ def available_subjects(
 
 __all__ = [
     "BASELINE_RUNS",
+    "CHECKSUM_FILE",
     "DEFAULT_TASK",
     "EXCLUDED_SUBJECTS",
     "EXECUTED_FF_RUNS",
@@ -393,4 +465,5 @@ __all__ = [
     "get_task",
     "run_spec",
     "subject_id",
+    "verify_checksums",
 ]

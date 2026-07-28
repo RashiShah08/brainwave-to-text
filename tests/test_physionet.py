@@ -146,3 +146,75 @@ class TestExclusions:
 
     def test_missing_root_returns_empty(self, tmp_path):
         assert available_subjects(tmp_path / "nope") == []
+
+
+class TestChecksumVerification:
+    """The archive ships SHA256SUMS.txt; use it rather than trusting the disk."""
+
+    def _manifest(self, tmp_path, entries):
+        lines = [f"{digest}  {name}" for digest, name in entries]
+        (tmp_path / "SHA256SUMS.txt").write_text("\n".join(lines) + "\n")
+
+    def _write(self, tmp_path, name, content: bytes) -> str:
+        import hashlib
+
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        return hashlib.sha256(content).hexdigest()
+
+    def test_reports_ok_when_everything_matches(self, tmp_path):
+        from bwt.data.physionet import verify_checksums
+
+        digest = self._write(tmp_path, "S001/S001R01.edf", b"recording")
+        self._manifest(tmp_path, [(digest, "S001/S001R01.edf")])
+
+        result = verify_checksums(tmp_path)
+        assert result["ok"] is True
+        assert result["verified"] == 1
+
+    def test_detects_a_corrupted_file(self, tmp_path):
+        from bwt.data.physionet import verify_checksums
+
+        self._write(tmp_path, "S001/S001R01.edf", b"recording")
+        self._manifest(tmp_path, [("0" * 64, "S001/S001R01.edf")])
+
+        result = verify_checksums(tmp_path)
+        assert result["ok"] is False
+        assert result["mismatched"] == ["S001/S001R01.edf"]
+
+    def test_detects_a_missing_file(self, tmp_path):
+        from bwt.data.physionet import verify_checksums
+
+        self._manifest(tmp_path, [("0" * 64, "S001/S001R01.edf")])
+        result = verify_checksums(tmp_path)
+        assert result["ok"] is False
+        assert result["missing"] == ["S001/S001R01.edf"]
+
+    def test_suffix_filter_selects_what_is_checked(self, tmp_path):
+        from bwt.data.physionet import verify_checksums
+
+        edf = self._write(tmp_path, "S001/S001R01.edf", b"a")
+        event = self._write(tmp_path, "S001/S001R01.edf.event", b"b")
+        self._manifest(tmp_path, [(edf, "S001/S001R01.edf"),
+                                  (event, "S001/S001R01.edf.event")])
+
+        assert verify_checksums(tmp_path, suffix=".edf")["checked"] == 1
+        assert verify_checksums(tmp_path, suffix=".event")["checked"] == 1
+        assert verify_checksums(tmp_path, suffix="")["checked"] == 2
+
+    def test_missing_manifest_is_an_explicit_error(self, tmp_path):
+        from bwt.data.physionet import verify_checksums
+
+        with pytest.raises(FileNotFoundError, match="SHA256SUMS"):
+            verify_checksums(tmp_path)
+
+    @pytest.mark.slow
+    def test_the_real_corpus_is_intact(self, real_data_root):
+        """Every shipped EDF must match upstream, sampled for speed."""
+        from bwt.data.physionet import verify_checksums
+
+        result = verify_checksums(real_data_root, suffix=".edf", limit=25)
+        assert result["ok"], (
+            f"corrupted: {result['mismatched']}, missing: {result['missing']}"
+        )
