@@ -160,31 +160,42 @@ Two caveats, both enforced in the code:
 
 ### The same code on a different lab's data
 
-BCI Competition IV-2a, subject A01, under the competition's own protocol — train
-on session one, test on session two recorded on a different day:
+BCI Competition IV-2a under the competition's own protocol — train on session
+one, test on session two, recorded on a different day. **Two subjects of nine**;
+the rest were still downloading from a host that serves at ~27 kB/s.
 
 | Pipeline | Two-class | Four-class | κ (four-class) |
 |---|---|---|---|
-| `csp_lda` | **0.903** | 0.809 | 0.745 |
-| `riemann_ts` | 0.875 | **0.816** | 0.755 |
-| `fbcsp_lda` | 0.896 | 0.802 | 0.736 |
+| `csp_lda` | **0.705 ± 0.280** | **0.662 ± 0.209** | 0.549 |
+| `riemann_ts` | 0.701 ± 0.246 | 0.632 ± 0.260 | 0.509 |
 
 ```bash
 bwt evaluate --dataset bnci2a --task mi_four_class --protocols session_holdout
 ```
 
-Not a single line of pipeline code changed between this and the EEGMMIDB
-results — a different lab, amplifier, 22 electrodes instead of 64, 250 Hz
-instead of 160, and a tongue-imagery class. That matters for interpreting the
-modest EEGMMIDB numbers: **the gap is a property of the corpora, not a defect in
-the implementation.** EEGMMIDB supplies 45 imagined trials per subject for the
-left/right task; BCI IV-2a supplies 288 per session under tighter experimental
-control.
+Not a line of pipeline code changed between this and the EEGMMIDB results — a
+different lab, amplifier, 22 electrodes instead of 64, 250 Hz instead of 160,
+and a tongue-imagery class.
 
-Two honest caveats. This is **one subject** — the remaining eight are still
-downloading from a host that serves at ~27 kB/s — and A01 is a comparatively
-strong performer. Published nine-subject means for four-class CSP on this dataset
-sit nearer 0.68, so do not read 0.81 as a dataset-level figure.
+**Look at the standard deviations, not the means.** They are enormous because
+the two subjects are wildly different:
+
+| Subject | Two-class | Four-class |
+|---|---|---|
+| A01 | 0.903 | 0.809 |
+| A02 | 0.507 | 0.514 |
+
+A01 is one of the strongest subjects in the corpus; A02 is at chance on the
+two-class task (0.507 against 0.500) while still well above chance on four-class
+(0.514 against 0.250). This is the same bimodality that shows up as the ±0.17
+spread on EEGMMIDB — a substantial minority of people cannot drive a
+motor-imagery BCI — and it is why a two-subject mean should not be quoted as a
+dataset result. Published nine-subject means for four-class CSP sit near 0.68,
+which the 0.662 here is consistent with.
+
+The comparison with EEGMMIDB's 0.611 still holds, and still points at the
+corpora rather than the code: BCI IV-2a supplies 288 trials per session under
+tighter experimental control against EEGMMIDB's ~45 per subject.
 
 ### Does the model use real physiology?
 
