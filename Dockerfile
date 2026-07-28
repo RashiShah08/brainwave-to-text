@@ -15,12 +15,17 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md LICENSE ./
 COPY src/ ./src/
 COPY templates/ ./templates/
 COPY static/ ./static/
 COPY configs/ ./configs/
-RUN pip install --no-cache-dir --no-deps -e .
+
+# A regular install, not editable: an image should not depend on its own build
+# tree staying intact. BWT_ROOT below pins template and config lookup to /app
+# regardless of where the package itself ends up in site-packages.
+RUN pip install --no-cache-dir --no-deps . \
+    && python -c "import bwt; print('bwt', bwt.__version__)"
 
 # Mount a trained artifact here:  -v $(pwd)/artifacts:/app/artifacts:ro
 VOLUME ["/app/artifacts"]
