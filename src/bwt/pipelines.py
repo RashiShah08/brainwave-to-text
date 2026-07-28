@@ -175,7 +175,7 @@ class FilterBank(BaseEstimator, TransformerMixin):
             )
         blocks = [
             np.asarray(est.transform(self._filter(X, band)))
-            for est, band in zip(self.estimators_, self.bands)
+            for est, band in zip(self.estimators_, self.bands, strict=True)
         ]
         return np.hstack([b.reshape(len(X), -1) for b in blocks])
 
@@ -350,9 +350,9 @@ def _deep(architecture: str, **overrides):
     def build(sfreq: float, n_classes: int, random_state: int) -> Pipeline:
         from bwt.deep import TorchClassifier
 
-        params = dict(
-            architecture=architecture, sfreq=sfreq, random_state=random_state,
-        )
+        params = {
+            "architecture": architecture, "sfreq": sfreq, "random_state": random_state,
+        }
         params.update(overrides)
         return Pipeline([
             ("bandpass", BandpassFilter(4.0, 38.0, sfreq=sfreq)),

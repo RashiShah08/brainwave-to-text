@@ -33,9 +33,7 @@ import numpy as np
 
 #: Default symbol set: the alphabet, space, and two editing commands. 32 slots
 #: makes the binary tree exactly 5 levels deep with no wasted branches.
-DEFAULT_ALPHABET: tuple[str, ...] = tuple(
-    list("ABCDEFGHIJKLMNOPQRSTUVWXYZ") + ["_", ".", ",", "?", "<BS>", "<CLR>"]
-)
+DEFAULT_ALPHABET: tuple[str, ...] = (*list("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), "_", ".", ",", "?", "<BS>", "<CLR>")
 
 BACKSPACE = "<BS>"
 CLEAR = "<CLR>"
@@ -165,7 +163,7 @@ class _TreeSpeller:
         steps: list[SpellerStep] = []
         candidates = list(self.alphabet)
 
-        for index, (command, confidence) in enumerate(zip(commands, confidences)):
+        for index, (command, confidence) in enumerate(zip(commands, confidences, strict=True)):
             if command not in self.commands:
                 raise ValueError(
                     f"command {command!r} is not one of {self.commands}"

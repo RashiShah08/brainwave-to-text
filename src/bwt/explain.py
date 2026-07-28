@@ -154,7 +154,7 @@ def band_power_timecourse(
     filtered = sosfiltfilt(sos, bundle.X[:, index, :].astype(np.float64), axis=-1)
     squared = filtered ** 2
 
-    width = max(1, int(round(window_seconds * bundle.sfreq)))
+    width = max(1, round(window_seconds * bundle.sfreq))
     n_windows = squared.shape[1] // width
     trimmed = squared[:, : n_windows * width]
     binned = trimmed.reshape(len(trimmed), n_windows, width).mean(axis=2)
@@ -209,7 +209,7 @@ def erd_curve(
                              sharey=True)
     axes = np.atleast_1d(axes)
 
-    for axis, channel in zip(axes, channels):
+    for axis, channel in zip(axes, channels, strict=True):
         times, curves = band_power_timecourse(bundle, channel, band)
         for name, values in curves.items():
             axis.plot(times, values, label=name, linewidth=1.9)

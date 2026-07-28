@@ -187,7 +187,7 @@ class Predictor:
                     index=position,
                     label=classes[int(class_index)],
                     confidence=float(row[int(class_index)]),
-                    probabilities={c: float(v) for c, v in zip(classes, row)},
+                    probabilities={c: float(v) for c, v in zip(classes, row, strict=True)},
                     onset_seconds=(None if onsets is None else float(onsets[position])),
                     source=source,
                 )
@@ -225,19 +225,20 @@ class Predictor:
         data = raw.get_data(picks=picks) * 1e6  # -> microvolts, model's units
 
         window = self.card.n_times
-        offset = int(round(self.card.tmin * sfreq))
+        offset = round(self.card.tmin * sfreq)
 
         cue_onsets = [
             float(onset)
             for onset, description in zip(raw.annotations.onset,
-                                          raw.annotations.description)
+                                          raw.annotations.description,
+                                          strict=True)
             if str(description).strip() in {"T1", "T2"}
         ]
 
         starts: list[int]
         if cue_onsets:
             mode = "cue_locked"
-            starts = [int(round(o * sfreq)) + offset for o in cue_onsets]
+            starts = [round(o * sfreq) + offset for o in cue_onsets]
             onsets = list(cue_onsets)
         else:
             mode = "sliding_window"
@@ -251,7 +252,7 @@ class Predictor:
 
         kept: list[np.ndarray] = []
         kept_onsets: list[float] = []
-        for start, onset in zip(starts, onsets):
+        for start, onset in zip(starts, onsets, strict=True):
             if start < 0 or start + window > data.shape[1]:
                 continue
             kept.append(data[:, start:start + window])

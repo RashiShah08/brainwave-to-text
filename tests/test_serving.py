@@ -57,7 +57,7 @@ class TestTrainServeParity:
         model, _ = load_artifact(trained_artifact)
         expected = model.predict_proba(synthetic_bundle.X[:10])
         served = predictor.predict_array(synthetic_bundle.X[:10])
-        for row, prediction in zip(expected, served):
+        for row, prediction in zip(expected, served, strict=True):
             for index, class_name in enumerate(synthetic_bundle.classes):
                 assert prediction.probabilities[class_name] == pytest.approx(
                     row[index], rel=1e-9
@@ -117,7 +117,7 @@ class TestEdfIngestion:
         batch = predictor.predict_edf(synthetic_edf)
         assert batch.n > 0
         assert batch.epoching == "cue_locked"
-        assert set(p.label for p in batch.predictions) <= set(batch.classes)
+        assert {p.label for p in batch.predictions} <= set(batch.classes)
         assert batch.text is not None
 
     def test_batch_serialises_to_json(self, predictor, synthetic_edf):
@@ -292,7 +292,7 @@ class TestRealDataEpochingParity:
                                    tmin=bundle.tmin, tmax=bundle.tmax)
         expected = training.get_data(copy=True) * 1e6
 
-        served, onsets, mode, _ = predictor.epochs_from_edf(path)
+        served, _onsets, mode, _ = predictor.epochs_from_edf(path)
 
         assert mode == "cue_locked"
         assert served.shape == expected.shape

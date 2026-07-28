@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import numpy as np
 import pytest
 from tests.conftest import make_epochs
@@ -346,7 +348,7 @@ class TestBNCI2aEpoching:
         }
 
         class _Fake:
-            subject_list = [1, 2]
+            subject_list: ClassVar[list[int]] = [1, 2]
 
             def get_data(self, subjects):
                 return {subjects[0]: sessions}
@@ -395,7 +397,7 @@ class TestBNCI2aEpoching:
         bad = {"session_0": {"run_0": self._fake_raw(sfreq=160.0)}}
 
         class _Fake:
-            subject_list = [1]
+            subject_list: ClassVar[list[int]] = [1]
 
             def get_data(self, subjects):
                 return {subjects[0]: bad}

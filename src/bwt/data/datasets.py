@@ -26,6 +26,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
 from pathlib import Path
+from typing import ClassVar
 
 import numpy as np
 
@@ -179,7 +180,7 @@ class BNCI2a(Dataset):
     # the same reason as EEGMMIDB: it is the visual response to the cue.
     default_window = (0.5, 3.5)
 
-    tasks = {
+    tasks: ClassVar[dict[str, tuple[str, ...]]] = {
         "mi_left_right": ("left_hand", "right_hand"),
         "mi_four_class": ("left_hand", "right_hand", "feet", "tongue"),
     }

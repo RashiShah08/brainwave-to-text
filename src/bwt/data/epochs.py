@@ -105,7 +105,7 @@ class EpochBundle:
 
     @property
     def subjects(self) -> list[int]:
-        return sorted(set(int(g) for g in self.groups))
+        return sorted({int(g) for g in self.groups})
 
     def class_counts(self) -> dict[str, int]:
         return {
@@ -294,11 +294,11 @@ def epochs_from_raw(
 
     sfreq = float(raw.info["sfreq"])
     rows: list[tuple[int, int, int]] = []
-    for onset, description in zip(raw.annotations.onset, raw.annotations.description):
+    for onset, description in zip(raw.annotations.onset, raw.annotations.description, strict=True):
         label = task.label_of(run, str(description))
         if label is None:
             continue
-        rows.append((int(round(float(onset) * sfreq)), 0, label))
+        rows.append((round(float(onset) * sfreq), 0, label))
 
     if not rows:
         return None

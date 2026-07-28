@@ -30,7 +30,7 @@ import torch.nn as nn
 def _scaled(reference_samples: int, reference_sfreq: float, sfreq: float,
             minimum: int = 1) -> int:
     """Rescale a kernel length quoted at one sampling rate to another."""
-    return max(minimum, int(round(reference_samples * sfreq / reference_sfreq)))
+    return max(minimum, round(reference_samples * sfreq / reference_sfreq))
 
 
 class _MaxNormConv2d(nn.Conv2d):

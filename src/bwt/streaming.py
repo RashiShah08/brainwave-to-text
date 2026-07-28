@@ -108,7 +108,7 @@ class EvidenceAccumulator:
         return weights / weights.sum()
 
     def posterior_dict(self) -> dict[str, float]:
-        return {c: float(p) for c, p in zip(self.classes, self.posterior)}
+        return {c: float(p) for c, p in zip(self.classes, self.posterior, strict=True)}
 
     def update(self, probabilities: Sequence[float]) -> Decision | None:
         """Feed one window's class probabilities. Returns a decision or ``None``.
@@ -230,7 +230,7 @@ class EDFStream:
             data=data,
             sfreq=sfreq,
             window_samples=card.n_times,
-            step_samples=max(1, int(round(step_seconds * sfreq))),
+            step_samples=max(1, round(step_seconds * sfreq)),
             speed=speed,
         )
 
@@ -239,11 +239,11 @@ class EDFStream:
         return max(0, span // self.step_samples + 1)
 
     def __iter__(self) -> Iterator[StreamWindow]:
-        index = 0
         wall_start = time.time()
-        for start in range(self.start_sample,
-                           self.data.shape[1] - self.window_samples + 1,
-                           self.step_samples):
+        starts = range(self.start_sample,
+                       self.data.shape[1] - self.window_samples + 1,
+                       self.step_samples)
+        for index, start in enumerate(starts):
             onset = start / self.sfreq
             if self.speed > 0:
                 # Pace against the recording's own clock so drift does not
@@ -258,7 +258,6 @@ class EDFStream:
                 onset_seconds=onset,
                 data=self.data[:, start:start + self.window_samples],
             )
-            index += 1
 
 
 class StreamingDecoder:
@@ -295,7 +294,7 @@ class StreamingDecoder:
             probabilities = self.predictor.model.predict_proba(
                 window.data[None, ...].astype(np.float32)
             )[0]
-            probs = {c: float(p) for c, p in zip(self.classes, probabilities)}
+            probs = {c: float(p) for c, p in zip(self.classes, probabilities, strict=True)}
             top = self.classes[int(np.argmax(probabilities))]
 
             decision = self.accumulator.update(probabilities)

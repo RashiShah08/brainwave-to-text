@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from sklearn.base import clone
+from sklearn.exceptions import NotFittedError
 from tests.conftest import make_epochs
 
 from bwt.pipelines import (
@@ -115,7 +116,7 @@ class TestEveryPipeline:
         X, y = make_epochs(n_per_class=12, n_channels=16, n_times=481)
         model = build_pipeline(name, sfreq=160.0, n_classes=2).fit(X, y)
         # A different channel count must not silently produce a prediction.
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             model.predict(np.zeros((2, 8, 481), dtype=np.float32))
 
 
@@ -127,7 +128,7 @@ class TestFactory:
         X, y = make_epochs(n_per_class=10, n_channels=12)
         a.fit(X, y)
         # Fitting one must not fit the other.
-        with pytest.raises(Exception):
+        with pytest.raises(NotFittedError):
             b.predict(X)
 
     def test_clone_of_template_is_unfitted(self):
@@ -135,7 +136,7 @@ class TestFactory:
         X, y = make_epochs(n_per_class=10, n_channels=12)
         model.fit(X, y)
         fresh = clone(model)
-        with pytest.raises(Exception):
+        with pytest.raises(NotFittedError):
             fresh.predict(X)
 
     def test_unknown_name_rejected(self):

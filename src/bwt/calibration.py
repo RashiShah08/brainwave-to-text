@@ -271,7 +271,7 @@ def calibration_curve(
                         n_eval_trials=len(y_ev), seconds=time.time() - t1,
                     ))
 
-        done = {r["strategy"]: r for r in result.summary_table()}
+        {r["strategy"]: r for r in result.summary_table()}
         log.info("  subject %s done (%.0fs total)", subject, time.time() - t0)
 
     return result

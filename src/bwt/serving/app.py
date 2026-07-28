@@ -281,7 +281,7 @@ def _iter_events(decoder, stream):
         event = StreamEvent(
             window=window.index,
             onset_seconds=window.onset_seconds,
-            probabilities={c: float(p) for c, p in zip(classes, probabilities)},
+            probabilities={c: float(p) for c, p in zip(classes, probabilities, strict=True)},
             top_label=classes[int(np.argmax(probabilities))],
             posterior=decoder.accumulator.posterior_dict(),
             decision=decision,

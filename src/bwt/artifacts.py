@@ -108,7 +108,7 @@ class ModelCard:
 
     @classmethod
     def from_dict(cls, payload: dict) -> ModelCard:
-        known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
+        known = set(cls.__dataclass_fields__)  # type: ignore[attr-defined]
         return cls(**{k: v for k, v in payload.items() if k in known})
 
     def headline(self) -> str:
