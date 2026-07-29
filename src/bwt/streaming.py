@@ -156,6 +156,28 @@ class StreamWindow:
     data: np.ndarray  # (channels, times), microvolts
 
 
+def channel_band_power(
+    data: np.ndarray,
+    sfreq: float,
+    band: tuple[float, float] = (8.0, 30.0),
+) -> np.ndarray:
+    """Log power per channel in one band, for a single window.
+
+    Used to drive the 3D visualiser. This is a *display* quantity computed
+    alongside the decoder, not an input to it -- the model does its own
+    filtering internally, and nothing here feeds back into a prediction.
+    """
+    from scipy.signal import butter, sosfiltfilt
+
+    nyquist = sfreq / 2.0
+    sos = butter(4, [band[0] / nyquist, band[1] / nyquist],
+                 btype="bandpass", output="sos")
+    padlen = min(27, data.shape[-1] - 1)
+    filtered = sosfiltfilt(sos, np.asarray(data, dtype=np.float64),
+                           axis=-1, padlen=padlen)
+    return np.log(np.var(filtered, axis=-1) + 1e-12)
+
+
 @dataclass
 class StreamEvent:
     """Everything that happened at one step of the stream."""
@@ -167,6 +189,10 @@ class StreamEvent:
     posterior: dict[str, float]
     decision: Decision | None = None
     speller: dict | None = None
+    #: Per-electrode mu/beta power for this window, normalised to roughly
+    #: [0, 1] against a running baseline. Present only when the caller asks for
+    #: it, since it costs a filter pass per window.
+    band_power: list[float] | None = None
 
     def to_dict(self) -> dict:
         payload = {
@@ -180,6 +206,8 @@ class StreamEvent:
             payload["decision"] = self.decision.to_dict()
         if self.speller is not None:
             payload["speller"] = self.speller
+        if self.band_power is not None:
+            payload["band_power"] = [round(v, 4) for v in self.band_power]
         return payload
 
 
@@ -472,13 +500,49 @@ def evaluate_accumulation(
     }
 
 
+class BandPowerNormaliser:
+    """Map raw log band power onto roughly [0, 1] for display.
+
+    A running mean and spread per channel, updated as the stream plays. Without
+    this the visualiser would be dominated by the fact that some electrodes
+    simply sit at higher impedance than others, and every head would look the
+    same regardless of what the subject was doing.
+    """
+
+    def __init__(self, n_channels: int, momentum: float = 0.05):
+        self.mean = np.zeros(n_channels)
+        self.var = np.ones(n_channels)
+        self.momentum = momentum
+        self.seen = 0
+
+    def __call__(self, power: np.ndarray) -> np.ndarray:
+        power = np.asarray(power, dtype=np.float64)
+        if self.seen == 0:
+            self.mean = power.copy()
+        else:
+            delta = power - self.mean
+            self.mean += self.momentum * delta
+            self.var = (1 - self.momentum) * self.var + self.momentum * delta ** 2
+        self.seen += 1
+
+        spread = np.sqrt(np.maximum(self.var, 1e-9))
+        z = (power - self.mean) / spread
+        # Squash to [0, 1]. +-1.5 sigma spans the full range: EEG band power
+        # varies over a narrow band once each electrode's own baseline is
+        # removed, so a wider window would leave every contact sitting near
+        # mid-grey and the display would carry no information.
+        return np.clip(0.5 + z / 3.0, 0.0, 1.0)
+
+
 __all__ = [
+    "BandPowerNormaliser",
     "Decision",
     "EDFStream",
     "EvidenceAccumulator",
     "StreamEvent",
     "StreamWindow",
     "StreamingDecoder",
+    "channel_band_power",
     "evaluate_accumulation",
     "simulate_speller_throughput",
 ]

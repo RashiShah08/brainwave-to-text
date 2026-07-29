@@ -329,3 +329,92 @@ class TestRealDataEpochingParity:
             [card.classes.index(p.label) for p in served.predictions]
         )
         np.testing.assert_array_equal(via_service, direct)
+
+
+class TestElectrodeGeometry:
+    """The 3D scene must be driven by the model's real montage."""
+
+    def test_geometry_endpoint_returns_every_channel(self, client):
+        payload = client.get("/api/v1/geometry").get_json()
+        assert payload["n_channels"] == 64
+        assert payload["unplaced"] == []
+        assert len(payload["electrodes"]) == 64
+
+    def test_geometry_matches_the_model_channel_order(self, client):
+        model = client.get("/api/v1/model").get_json()
+        geometry = client.get("/api/v1/geometry").get_json()
+        assert [e["name"] for e in geometry["electrodes"]] == \
+            model["input_contract"]["channels"]
+
+    def test_left_and_right_electrodes_are_on_opposite_sides(self, client):
+        by_name = {e["name"]: e for e in
+                   client.get("/api/v1/geometry").get_json()["electrodes"]}
+        # A mirrored scene would render the contralateral highlight backwards.
+        assert by_name["C3"]["x"] < 0 < by_name["C4"]["x"]
+        assert by_name["FC5"]["x"] < 0 < by_name["FC6"]["x"]
+
+    def test_motor_regions_are_labelled(self, client):
+        by_name = {e["name"]: e for e in
+                   client.get("/api/v1/geometry").get_json()["electrodes"]}
+        assert by_name["C3"]["region"] == "left_motor"
+        assert by_name["C4"]["region"] == "right_motor"
+        assert by_name["Cz"]["region"] == "midline_motor"
+        assert by_name["Oz"]["region"] == "other"
+
+    def test_coordinates_are_normalised_for_the_scene(self, client):
+        electrodes = client.get("/api/v1/geometry").get_json()["electrodes"]
+        for e in electrodes:
+            for axis in ("x", "y", "z"):
+                assert -1.5 <= e[axis] <= 1.5, f"{e['name']} {axis} out of range"
+
+
+class TestBandPowerStream:
+    """Band power is a display quantity, opt-in and never fed back to the model."""
+
+    def test_absent_unless_requested(self, predictor, synthetic_bundle):
+        from bwt.serving.app import _iter_events
+
+        decoder = predictor.streaming_decoder()
+        stream = _FakeStream(synthetic_bundle.X[:3])
+        events = list(_iter_events(decoder, stream, with_band_power=False))
+        assert all(e.band_power is None for e in events)
+
+    def test_present_and_bounded_when_requested(self, predictor, synthetic_bundle):
+        from bwt.serving.app import _iter_events
+
+        decoder = predictor.streaming_decoder()
+        stream = _FakeStream(synthetic_bundle.X[:6])
+        events = list(_iter_events(decoder, stream, with_band_power=True))
+        assert all(e.band_power is not None for e in events)
+        for event in events:
+            assert len(event.band_power) == predictor.card.n_channels
+            assert all(0.0 <= v <= 1.0 for v in event.band_power)
+
+    def test_does_not_change_the_predictions(self, predictor, synthetic_bundle):
+        """Turning the visualiser on must not alter a single decode."""
+        from bwt.serving.app import _iter_events
+
+        def labels(flag):
+            decoder = predictor.streaming_decoder()
+            stream = _FakeStream(synthetic_bundle.X[:6])
+            return [e.top_label for e in
+                    _iter_events(decoder, stream, with_band_power=flag)]
+
+        assert labels(False) == labels(True)
+
+
+class _FakeStream:
+    """Minimal stand-in for EDFStream over pre-cut epochs."""
+
+    def __init__(self, epochs):
+        self.epochs = epochs
+
+    def __len__(self):
+        return len(self.epochs)
+
+    def __iter__(self):
+        from bwt.streaming import StreamWindow
+
+        for i, data in enumerate(self.epochs):
+            yield StreamWindow(index=i, start_sample=i * 100,
+                               onset_seconds=i * 0.5, data=data)

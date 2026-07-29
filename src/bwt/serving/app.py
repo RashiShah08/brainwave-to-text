@@ -113,6 +113,18 @@ def _register_routes(app: Flask) -> None:
             classes=predictor.card.classes,
         )
 
+    @app.get("/api/v1/geometry")
+    def geometry():
+        """3D electrode positions for the loaded model's channel set.
+
+        Derived from the montage at request time rather than a static file, so
+        the visualiser can never draw a head that disagrees with the model.
+        """
+        from bwt.serving.geometry import electrode_geometry
+
+        predictor = _predictor()
+        return jsonify(electrode_geometry(predictor.card.ch_names))
+
     @app.get("/api/v1/model")
     def model_info():
         predictor = _predictor()
@@ -202,6 +214,7 @@ def _register_routes(app: Flask) -> None:
         step = request.args.get("step", default=0.5, type=float)
         threshold = request.args.get("threshold", default=0.9, type=float)
         max_windows = request.args.get("max_windows", default=40, type=int)
+        want_power = request.args.get("band_power", default="0") in {"1", "true"}
 
         if not 0.0 <= speed <= 20.0:
             raise ValueError("speed must be between 0 and 20")
@@ -230,7 +243,8 @@ def _register_routes(app: Flask) -> None:
                 }) + "\n"
 
                 emitted = 0
-                for event in _iter_events(decoder, stream):
+                for event in _iter_events(decoder, stream,
+                                          with_band_power=want_power):
                     yield _json.dumps({"type": "window", **event.to_dict()}) + "\n"
                     emitted += 1
                     if emitted >= config.serve.max_epochs_per_request:
@@ -257,21 +271,30 @@ def _register_routes(app: Flask) -> None:
         )
 
 
-def _iter_events(decoder, stream):
+def _iter_events(decoder, stream, *, with_band_power: bool = False):
     """Yield streaming events one at a time.
 
     ``StreamingDecoder.run`` collects everything before returning, which defeats
     the point of a stream, so the generator form is built here from the same
     components rather than duplicating the decode logic.
+
+    ``with_band_power`` adds per-electrode mu/beta power for the 3D visualiser.
+    It is computed alongside the decoder purely for display and never feeds back
+    into a prediction.
     """
     import numpy as np
 
-    from bwt.streaming import StreamEvent
+    from bwt.streaming import BandPowerNormaliser, StreamEvent, channel_band_power
 
     classes = decoder.classes
     commands: list[str] = []
     confidences: list[float] = []
     decoder.accumulator.reset()
+
+    normalise = (
+        BandPowerNormaliser(decoder.predictor.card.n_channels)
+        if with_band_power else None
+    )
 
     for window in stream:
         probabilities = decoder.predictor.model.predict_proba(
@@ -286,6 +309,11 @@ def _iter_events(decoder, stream):
             posterior=decoder.accumulator.posterior_dict(),
             decision=decision,
         )
+
+        if normalise is not None:
+            raw = channel_band_power(window.data, decoder.predictor.card.sfreq)
+            event.band_power = [float(v) for v in normalise(raw)]
+
         if decision is not None:
             if decision.label is not None and decoder.speller is not None:
                 commands.append(decision.label)
