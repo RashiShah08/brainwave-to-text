@@ -336,6 +336,39 @@ dl.spec dd {
     var(--ink-2) 0 1.5px, transparent 1.5px 4px);
 }
 
+/* ── structure key ───────────────────────────────────────────────────── */
+
+.keyed { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule); }
+.keyed-row { border-bottom: 1px solid var(--rule); }
+.keyed-hit {
+  display: grid; grid-template-columns: minmax(9rem, 15rem) 1fr 3.2rem;
+  gap: 1rem; align-items: center; width: 100%;
+  background: none; border: 0; cursor: pointer;
+  padding: 0.5rem 0.5rem 0.5rem 0.15rem; text-align: left; color: inherit;
+}
+.keyed-hit:hover { background: rgba(143, 51, 32, 0.06); }
+.keyed-name { font-family: var(--serif); font-size: 0.95rem; color: var(--ink-2); }
+.keyed-track {
+  position: relative; height: 8px;
+  border: 1px solid var(--rule-2); background: rgba(221, 208, 178, 0.45);
+}
+.keyed-fill {
+  position: absolute; inset: 0 auto 0 0; width: 0;
+  background: repeating-linear-gradient(45deg,
+    var(--ink) 0 1.5px, transparent 1.5px 4px);
+  transition: width .12s linear;
+}
+.keyed-val {
+  font-size: 11.5px; color: var(--ink-3); text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.keyed-row.is-selected { background: rgba(63, 107, 87, 0.10); }
+.keyed-row.is-selected .keyed-name { color: var(--ink); font-weight: 600; }
+.keyed-row.is-selected .keyed-fill {
+  background: repeating-linear-gradient(45deg,
+    var(--verdi) 0 1.5px, transparent 1.5px 4px);
+}
+
 /* ── decoded text ────────────────────────────────────────────────────── */
 
 .decoded {

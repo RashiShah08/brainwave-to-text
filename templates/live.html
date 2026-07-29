@@ -25,6 +25,15 @@
 </div>
 
 <div class="card">
+  <h2>Structures</h2>
+  <p class="muted" style="margin-top:0;font-size:0.9rem">
+    Live mu/beta power from the uploaded recording, attributed to the structure
+    each contact sits over. Select a row to hold it on the specimen.
+  </p>
+  <ul class="keyed" id="keyed"></ul>
+</div>
+
+<div class="card">
   <h2>Source</h2>
   <form id="form">
     <label class="dropzone" id="zone" for="file">
@@ -151,6 +160,43 @@ window.neuralWorld.then((env) => {
   els.ovStatus.textContent = env
     ? document.documentElement.dataset.channels + ' electrodes'
     : 'no webgl';
+  if (env) buildKeyed(env);
+});
+
+// ---- structure key: live activity, and a second way to select -------------
+const keyed = document.getElementById('keyed');
+let keyedRows = [];
+
+function buildKeyed(env) {
+  keyed.innerHTML = '';
+  keyedRows = env.regionNames().map((name, id) => {
+    if (!env.hasContacts(id)) return null;   // nothing measures it; omit it
+    const li = document.createElement('li');
+    li.className = 'keyed-row';
+    li.innerHTML =
+      '<button type="button" class="keyed-hit">' +
+      '<span class="keyed-name"></span>' +
+      '<span class="keyed-track"><span class="keyed-fill"></span></span>' +
+      '<span class="keyed-val mono">0.00</span></button>';
+    li.querySelector('.keyed-name').textContent = name;
+    li.querySelector('.keyed-hit').addEventListener('click', () => env.select(id));
+    keyed.appendChild(li);
+    return { id, li, fill: li.querySelector('.keyed-fill'), val: li.querySelector('.keyed-val') };
+  }).filter(Boolean);
+
+  env.onActivity = (activity, selected) => {
+    for (const row of keyedRows) {
+      const v = activity[row.id];
+      row.fill.style.width = (Math.min(1, v) * 100).toFixed(1) + '%';
+      row.val.textContent = v.toFixed(2);
+      row.li.classList.toggle('is-selected', row.id === selected);
+    }
+  };
+}
+
+addEventListener('brain:select', (e) => {
+  const id = e.detail ? e.detail.id : -1;
+  for (const row of keyedRows) row.li.classList.toggle('is-selected', row.id === id);
 });
 
 // ---- file picking ---------------------------------------------------------

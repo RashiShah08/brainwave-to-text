@@ -170,39 +170,66 @@ const TISSUE_VERT = `
     gl_Position = projectionMatrix * mv;
   }`;
 
+/**
+ * Engraved tissue.
+ *
+ * Tone is not painted, it is cut: three sets of parallel strokes are laid down
+ * in the picture plane and widened as the surface turns away from the light,
+ * so shadow becomes denser hatching and then cross-hatching. That is how a
+ * steel engraving renders form, and screen-space is the right space for it —
+ * a burin cuts in the plane of the plate, not along the specimen.
+ *
+ * Nothing is discarded: unlit fragments still write depth, so the paper shows
+ * between strokes without the far side of the brain bleeding through the gaps.
+ */
 const TISSUE_FRAG = `
-  uniform vec3 uLit;
-  uniform vec3 uShade;
-  uniform vec3 uBounce;
+  uniform vec3 uInk;
+  uniform float uPR;
   varying vec3 vN;
   varying vec3 vP;
   varying float vDepth;
   varying float vHi;
   varying vec3 vHiCol;
 
+  float lines(vec2 p, float a, float f) {
+    float v = p.x * cos(a) + p.y * sin(a);
+    return abs(fract(v * f) - 0.5) * 2.0;
+  }
+
+  // One stroke set. w is how wide the inked band is; 0 means not engraved.
+  float layer(vec2 p, float a, float f, float w) {
+    if (w <= 0.002) return 0.0;
+    return 1.0 - smoothstep(w - 0.10, w + 0.10, lines(p, a, f));
+  }
+
   void main() {
     vec3 N = normalize(vN);
     vec3 V = normalize(-vP);
-    vec3 L = normalize(vec3(-0.42, 0.78, 0.62));
+    vec3 L = normalize(vec3(-0.45, 0.74, 0.60));
 
-    // Wrapped diffuse. Tissue scatters, so the terminator is soft and the
-    // shadow side never goes fully dark.
+    // Generous ambient. A plate is mostly bare paper — without a high floor
+    // here every surface facing away from the light fills in solid black.
     float wrap = dot(N, L) * 0.5 + 0.5;
-    vec3 base = mix(uShade, uLit, wrap * wrap);
+    float tone = 0.30 + 0.70 * pow(clamp(wrap, 0.0, 1.0), 1.35);
+    tone *= 1.0 - vDepth * 0.50;               // sulci hold ink
+    float dk = clamp(1.0 - tone, 0.0, 1.0);
 
-    // Broad, weak specular: brain in a specimen jar is damp, not glossy.
-    float spec = pow(max(dot(reflect(-L, N), V), 0.0), 22.0);
-    base += vec3(1.0) * spec * 0.10;
+    vec2 sp = gl_FragCoord.xy / uPR;
+    float F = 0.22;                            // ~4.5 px between strokes
+    float W = 0.34;                            // strokes stay thin
+    float ink = layer(sp,  0.62, F,        clamp(dk * 0.62, 0.0, W));
+    ink = max(ink, layer(sp, -0.72, F,        clamp((dk - 0.40) * 0.85, 0.0, W)));
+    ink = max(ink, layer(sp,  1.50, F * 1.3,  clamp((dk - 0.72) * 1.10, 0.0, W)));
+    ink = max(ink, smoothstep(0.95, 1.0, dk));  // solid only in the deepest
 
-    // Bounced paper light along the silhouette keeps it seated on the page.
-    float rim = pow(1.0 - max(dot(N, V), 0.0), 2.4);
-    base += uBounce * rim * 0.30;
+    // Engravings outline the form; without this the silhouette dissolves.
+    float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0);
+    ink = max(ink, smoothstep(0.62, 0.97, rim));
 
-    // Sulcal occlusion. This is the thing that makes the folds legible.
-    base *= 1.0 - vDepth * 0.62;
-
-    base = mix(base, vHiCol, clamp(vHi, 0.0, 1.0) * 0.80);
-    gl_FragColor = vec4(base, 1.0);
+    // A highlighted region is cut harder as well as recoloured, so it still
+    // reads as emphasis and not merely as a different hue.
+    ink = clamp(ink + vHi * 0.38, 0.0, 1.0);
+    gl_FragColor = vec4(mix(uInk, vHiCol, clamp(vHi, 0.0, 1.0) * 0.92), ink);
   }`;
 
 const FOG = `
@@ -289,6 +316,10 @@ export class NeuralEnvironment {
     this.hovered = -1;
     this.wash = new Float32Array(N_REGIONS);
     this.washEased = new Float32Array(N_REGIONS);
+    this.activity = new Float32Array(N_REGIONS);
+    this.reportIn = 0;
+    /** Set by the page to receive live per-structure activity. */
+    this.onActivity = null;
 
     this.text = [];
     this.glyphs = [];
@@ -365,13 +396,16 @@ export class NeuralEnvironment {
       uniforms: {
         uHi: { value: this.uHi },
         uHiCol: { value: this.uHiCol },
-        // Fixed tissue, not gingerbread: pinkish grey, cool in shadow.
-        uLit: { value: new THREE.Color('#cbb2ab') },
-        uShade: { value: new THREE.Color('#584540') },
-        uBounce: { value: new THREE.Color('#efe6d2') },
+        uInk: { value: new THREE.Color('#3a2a1c') },
+        uPR: { value: 1 },
       },
       vertexShader: TISSUE_VERT,
       fragmentShader: TISSUE_FRAG,
+      // Paper shows between the strokes, but depth is still written so the
+      // far side cannot show through the gaps.
+      transparent: true,
+      depthWrite: true,
+      depthTest: true,
     });
   }
 
@@ -466,8 +500,9 @@ export class NeuralEnvironment {
     this.rig.add(this.cerebrum);
     this.pickable.push(this.cerebrum);
 
-    // Keep the vertices for projecting contacts onto the surface.
+    // Kept for projecting contacts onto the surface and reading their region.
     this.cortexPos = cortex.position;
+    this.cortexRegion = cortex.region;
     this.cortexN = cortex.nV;
   }
 
@@ -527,6 +562,7 @@ export class NeuralEnvironment {
   _project() {
     this.site = [];
     this.normal = [];
+    this.siteRegion = new Int32Array(this.n);
     const pos = this.cortexPos;
     const v = new THREE.Vector3();
 
@@ -548,7 +584,15 @@ export class NeuralEnvironment {
       v.set(pos[k], pos[k + 1], pos[k + 2]);
       this.site.push(v.clone().multiplyScalar(1.035));
       this.normal.push(v.clone().normalize());
+      // Which anatomical structure this contact actually sits over. This is
+      // what lets the uploaded recording light real brain parts.
+      this.siteRegion[this.site.length - 1] = this.cortexRegion[best];
     }
+
+    // Contacts per region, so activity can be averaged rather than summed —
+    // a region with eight electrodes must not read as busier than one with two.
+    this.regionCount = new Float32Array(N_REGIONS);
+    for (let i = 0; i < this.n; i++) this.regionCount[this.siteRegion[i]] += 1;
   }
 
   /** Electrode markers, sized and darkened by measured band power. */
@@ -788,14 +832,7 @@ export class NeuralEnvironment {
       if (attr && hit.face) region = Math.round(attr.getX(hit.face.a));
     }
     if (select) {
-      this.selected = this.selected === region ? -1 : region;
-      dispatchEvent(new CustomEvent('brain:select', {
-        detail: this.selected < 0 ? null : {
-          id: this.selected,
-          name: REGION_NAME[this.selected],
-          note: REGION_NOTE[this.selected],
-        },
-      }));
+      this.select(this.selected === region ? -1 : region);
     } else {
       this.hovered = region;
     }
@@ -814,9 +851,33 @@ export class NeuralEnvironment {
     this.cam.aspect = w / h;
     this.cam.updateProjectionMatrix();
     this.sites.material.uniforms.uScale.value = Math.max(64, h * 0.055);
+    // Stroke spacing is in CSS pixels, so it must not change with DPI.
+    this.tissueMat.uniforms.uPR.value = this.r.getPixelRatio();
   }
 
   // -- public ---------------------------------------------------------------
+
+  /** Names in region-id order, for building a key. */
+  regionNames() {
+    return REGION_NAME.slice(0, N_REGIONS);
+  }
+
+  /** Whether any contact sits over this structure, so it can be measured. */
+  hasContacts(id) {
+    return this.regionCount[id] > 0;
+  }
+
+  /** Select a structure from the interface, as clicking it would. */
+  select(id) {
+    this.selected = (id === this.selected || id == null || id < 0) ? -1 : id;
+    dispatchEvent(new CustomEvent('brain:select', {
+      detail: this.selected < 0 ? null : {
+        id: this.selected,
+        name: REGION_NAME[this.selected],
+        note: REGION_NOTE[this.selected],
+      },
+    }));
+  }
 
   static region(label) {
     const l = (label || '').toLowerCase();
@@ -944,16 +1005,35 @@ export class NeuralEnvironment {
       this.sites.geometry.attributes[a].needsUpdate = true;
     }
 
+    // -- live activity per structure ----------------------------------------
+    // Straight from the uploaded recording: every contact's measured mu/beta
+    // power is attributed to the structure it sits over, and averaged.
+    this.activity.fill(0);
+    for (let i = 0; i < this.n; i++) this.activity[this.siteRegion[i]] += this.vis[i];
+    for (let r = 0; r < N_REGIONS; r++) {
+      if (this.regionCount[r] > 0) this.activity[r] /= this.regionCount[r];
+    }
+
     // -- region highlights --------------------------------------------------
     for (let r = 0; r < N_REGIONS; r++) {
       this.washEased[r] += (this.wash[r] - this.washEased[r]) * (1 - Math.exp(-dt * 3.5));
-      let hi = this.washEased[r] * 0.34;
+      // Resting power sits near 0.42, so subtract it: a structure should only
+      // engrave harder when it is actually above its own baseline.
+      const live = Math.max(0, this.activity[r] - 0.44) * 1.5;
+      let hi = Math.max(live * 0.42, this.washEased[r] * 0.34);
       if (r === this.flashRegion) hi = Math.max(hi, this.flashAmount);
-      if (r === this.hovered && r !== this.selected) hi = Math.max(hi, 0.16);
+      if (r === this.hovered && r !== this.selected) hi = Math.max(hi, 0.18);
       if (r === this.selected) hi = Math.max(hi, 0.62 + 0.08 * Math.sin(t * 2.4));
       this.uHi[r] = hi;
-      // Oxblood is what the decoder is doing; verdigris is what you selected.
+      // Oxblood is what the recording is doing; verdigris is what you selected.
       this.uHiCol[r].copy(r === this.selected ? VERDIGRIS : OXBLOOD);
+    }
+
+    // Report to the interface at a readable rate, not every frame.
+    this.reportIn -= dt;
+    if (this.reportIn <= 0 && this.onActivity) {
+      this.reportIn = 0.12;
+      this.onActivity(this.activity, this.selected);
     }
 
     // -- margin lettering ---------------------------------------------------
