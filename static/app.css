@@ -76,6 +76,38 @@ body.grabbing, body.grabbing * { cursor: grabbing !important; }
 
 .topbar, main, .footer { position: relative; z-index: 2; }
 
+/* ── selected structure ──────────────────────────────────────────────── */
+
+.region-card {
+  position: fixed; z-index: 30;
+  right: max(2.5rem, 4vw); bottom: 2.5rem;
+  width: min(19rem, calc(100vw - 5rem));
+  padding: 0.95rem 2rem 1.05rem 1.1rem;
+  background: rgba(236, 227, 207, 0.94);
+  border: 1px solid var(--rule-2);
+  box-shadow: 5px 6px 0 -3px rgba(80, 62, 32, 0.14);
+}
+.region-card[hidden] { display: none; }
+.region-eyebrow {
+  font-family: var(--type); font-size: 9.5px; letter-spacing: 0.2em;
+  text-transform: uppercase; color: var(--sepia); margin-bottom: 0.35rem;
+}
+.region-name {
+  font-family: var(--serif); font-size: 1.12rem; line-height: 1.25;
+  color: var(--oxblood); margin-bottom: 0.3rem;
+}
+.region-note {
+  margin: 0; font-size: 13px; line-height: 1.5;
+  color: var(--ink-2); font-style: italic;
+}
+.region-close {
+  position: absolute; top: 0.45rem; right: 0.5rem;
+  background: none; border: 0; cursor: pointer;
+  font-family: var(--type); font-size: 15px; line-height: 1;
+  color: var(--ink-3); padding: 0.2rem 0.35rem;
+}
+.region-close:hover { color: var(--oxblood); }
+
 a {
   color: var(--ink); text-decoration: none;
   border-bottom: 1px solid var(--rule-2);

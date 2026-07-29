@@ -28,6 +28,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-cov>=5.0", "edfio>=0.4"]
+# Only needed to re-bake static/cortex.bin from fsaverage; the baked mesh is
+# committed, so running or serving the app does not require this.
+cortex = ["nibabel>=5.0"]
 # Neural pipelines. Install from PyTorch's own index for CUDA builds.
 deep = ["torch>=2.4"]
 # Second dataset (BCI Competition IV-2a).

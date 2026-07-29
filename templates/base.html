@@ -9,15 +9,21 @@
   <!-- Must run before any page script: module scripts execute in document
        order, and content blocks sit above the end of <body>. -->
   <script type="module">
-    import { NeuralEnvironment } from "{{ url_for('static', filename='brain3d.js') }}";
+    import { NeuralEnvironment, decodeCortex }
+      from "{{ url_for('static', filename='brain3d.js') }}";
 
     // Resolves once the environment exists, so pages can drive it without
-    // racing the geometry fetch. Null when WebGL is unavailable. Not named
-    // `world`: an element id already claims that global.
-    window.neuralWorld = fetch('/api/v1/geometry')
-      .then((r) => r.json())
-      .then((geo) => {
-        const env = new NeuralEnvironment(document.getElementById('world'), geo);
+    // racing the loads. Null when WebGL is unavailable. Not named `world`: an
+    // element id already claims that global.
+    window.neuralWorld = Promise.all([
+      fetch('/api/v1/geometry').then((r) => r.json()),
+      fetch("{{ url_for('static', filename='cortex.bin') }}")
+        .then((r) => r.arrayBuffer()).then(decodeCortex),
+    ])
+      .then(([geo, cortex]) => {
+        const env = new NeuralEnvironment(
+          document.getElementById('world'), geo, cortex,
+        );
         document.documentElement.dataset.world = 'live';
         document.documentElement.dataset.channels = geo.n_channels;
         return env;
@@ -33,6 +39,13 @@
   <!-- The scene is the page. Every view is rendered inside it. -->
   <canvas id="world" aria-hidden="true"></canvas>
   <div class="vignette" aria-hidden="true"></div>
+
+  <aside id="region" class="region-card" aria-live="polite" hidden>
+    <div class="region-eyebrow">Selected structure</div>
+    <div class="region-name"></div>
+    <p class="region-note"></p>
+    <button type="button" class="region-close" aria-label="Clear selection">&times;</button>
+  </aside>
 
   <header class="topbar">
     <div class="wrap">
@@ -67,6 +80,23 @@
     </p>
   </footer>
 
+  <script>
+    // Naming panel for whatever structure is selected on the specimen.
+    (function () {
+      var card = document.getElementById('region');
+      var name = card.querySelector('.region-name');
+      var note = card.querySelector('.region-note');
+      addEventListener('brain:select', function (e) {
+        if (!e.detail) { card.hidden = true; return; }
+        name.textContent = e.detail.name;
+        note.textContent = e.detail.note;
+        card.hidden = false;
+      });
+      card.querySelector('.region-close').addEventListener('click', function () {
+        card.hidden = true;
+      });
+    }());
+  </script>
   {% block scripts %}{% endblock %}
 </body>
 </html>
