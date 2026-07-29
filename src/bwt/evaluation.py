@@ -24,6 +24,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 
 import numpy as np
 from sklearn.metrics import (
@@ -468,6 +469,7 @@ def permutation_test(
     n_splits: int = 5,
     n_jobs: int = 1,
     random_state: int = 42,
+    checkpoint: Path | None = None,
 ) -> tuple[float, list[float]]:
     """Estimate how often a shuffled-label model reaches ``observed``.
 
@@ -477,12 +479,36 @@ def permutation_test(
 
     Returns ``(p_value, scores)`` with the conventional ``(hits + 1) / (n + 1)``
     estimator, so the p-value is never reported as exactly zero.
+
+    Each permutation is a full cross-validation, so this is slow. Pass
+    ``checkpoint`` to append every score to a JSON file as it completes and to
+    resume from that file on a later call -- the same reasoning as
+    :mod:`bwt.benchmarking`, since a run long enough to be worth checkpointing
+    is long enough to be interrupted.
     """
+    import json
+
     rng = np.random.default_rng(random_state)
     X, y, groups = bundle.X, bundle.y, bundle.groups
     scores: list[float] = []
 
-    for index in range(n_permutations):
+    if checkpoint is not None and Path(checkpoint).is_file():
+        try:
+            saved = json.loads(Path(checkpoint).read_text())
+            if saved.get("random_state") == random_state:
+                scores = [float(v) for v in saved.get("scores", [])]
+                log.info("resuming permutation test from %d saved score(s)",
+                         len(scores))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("ignoring unreadable permutation checkpoint (%s)", exc)
+
+    # Replay the generator so a resumed run continues the same random sequence
+    # rather than repeating permutations already done.
+    for _ in range(len(scores)):
+        for subject in np.unique(groups):
+            rng.permutation(y[groups == subject])
+
+    for index in range(len(scores), n_permutations):
         shuffled = y.copy()
         for subject in np.unique(groups):
             mask = groups == subject
@@ -498,12 +524,25 @@ def permutation_test(
                 accuracy_score(shuffled[test_idx], model.predict(X[test_idx]))
             )
         scores.append(float(np.mean(fold_scores)))
-        if (index + 1) % 10 == 0:
-            log.info("  permutation %d/%d (mean so far %.4f)",
-                     index + 1, n_permutations, float(np.mean(scores)))
+
+        if checkpoint is not None:
+            path = Path(checkpoint)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp.json")
+            tmp.write_text(json.dumps({
+                "random_state": random_state,
+                "observed": observed,
+                "n_permutations": n_permutations,
+                "scores": scores,
+            }))
+            tmp.replace(path)
+
+        log.info("  permutation %d/%d: %.4f (mean %.4f, max %.4f)",
+                 index + 1, n_permutations, scores[-1],
+                 float(np.mean(scores)), float(np.max(scores)))
 
     hits = int(np.sum(np.asarray(scores) >= observed))
-    return (hits + 1) / (n_permutations + 1), scores
+    return (hits + 1) / (len(scores) + 1), scores
 
 
 __all__ = [

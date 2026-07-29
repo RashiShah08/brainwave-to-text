@@ -98,9 +98,13 @@ def _evaluate(bundle, pipeline_name, protocols, splits, n_jobs, permutations):
 
         if permutations and protocol == "cross_subject":
             log.info("running %d-iteration permutation test", permutations)
+            # Each permutation is a full cross-validation; checkpoint so an
+            # interrupted run resumes instead of restarting.
             p_value, scores = permutation_test(
                 bundle, factory, observed=result.mean_accuracy,
                 n_permutations=permutations, n_splits=splits,
+                checkpoint=reports_dir() /
+                f"permutation_{bundle.task}_{pipeline_name}.json",
             )
             result.permutation_p = p_value
             result.permutation_scores = scores
