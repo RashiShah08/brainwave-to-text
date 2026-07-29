@@ -1,329 +1,383 @@
 /**
  * 3D cortical visualiser.
  *
- * Every electrode sits at its true montage coordinate, and its glow is driven
- * by real mu/beta power streamed from the decoder. Nothing here is decorative
- * geometry: when the left sensorimotor strip lights up, that is genuinely C3
- * and its neighbours desynchronising.
+ * Every electrode sits at its true montage coordinate and its brightness is
+ * driven by real mu/beta power streamed from the decoder. When the left
+ * sensorimotor strip lights up, that is genuinely C3 and its neighbours.
  *
- * Uses core three.js only — the glow is additive sprites rather than a
- * post-processing bloom pass, which keeps the page to a single vendored file.
+ * Built for a handful of draw calls: one InstancedMesh for the 64 contacts and
+ * one Points cloud for their glow, rather than a mesh-plus-sprites per
+ * electrode. The first version created ~200 objects and lost the WebGL context
+ * outright on software renderers, which drew nothing at all.
+ *
+ * Deliberately unlit — appearance depends only on measured power, never on
+ * where a light happens to sit.
  */
 
 import * as THREE from './three.module.min.js';
 
-const PALETTE = {
-  idle: new THREE.Color(0x2b3a55),
-  low: new THREE.Color(0x1e3a8a),
-  mid: new THREE.Color(0x22d3ee),
-  high: new THREE.Color(0x5eead4),
-  hot: new THREE.Color(0xfbbf24),
-  left: new THREE.Color(0xf472b6),
-  right: new THREE.Color(0x818cf8),
+const C = {
+  cold: new THREE.Color('#1b2a6b'),
+  mid: new THREE.Color('#2563eb'),
+  warm: new THREE.Color('#22d3ee'),
+  hot: new THREE.Color('#5eead4'),
+  peak: new THREE.Color('#f0fdfa'),
+  left: new THREE.Color('#fb7185'),
+  right: new THREE.Color('#c4b5fd'),
 };
 
-/** Radial-gradient sprite used for every glow. Generated, not loaded. */
 function glowTexture() {
-  const size = 128;
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  g.addColorStop(0.0, 'rgba(255,255,255,1)');
-  g.addColorStop(0.2, 'rgba(255,255,255,0.65)');
-  g.addColorStop(0.5, 'rgba(255,255,255,0.18)');
-  g.addColorStop(1.0, 'rgba(255,255,255,0)');
+  const s = 128;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = s;
+  const ctx = cv.getContext('2d');
+  const g = ctx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+  g.addColorStop(0.00, 'rgba(255,255,255,1)');
+  g.addColorStop(0.25, 'rgba(255,255,255,0.45)');
+  g.addColorStop(0.55, 'rgba(255,255,255,0.12)');
+  g.addColorStop(1.00, 'rgba(255,255,255,0)');
   ctx.fillStyle = g;
-  ctx.fillRect(0, 0, size, size);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.needsUpdate = true;
-  return tex;
+  ctx.fillRect(0, 0, s, s);
+  const t = new THREE.CanvasTexture(cv);
+  t.needsUpdate = true;
+  return t;
 }
 
 export class BrainScene {
   constructor(container, geometry) {
-    this.container = container;
+    this.el = container;
     this.electrodes = geometry.electrodes;
     this.n = this.electrodes.length;
-    this.power = new Float32Array(this.n).fill(0.5);
-    this.target = new Float32Array(this.n).fill(0.5);
+    this.power = new Float32Array(this.n).fill(0.45);
+    this.target = new Float32Array(this.n).fill(0.45);
+    this.flashAmount = 0;
+    this.flashSide = null;
+    this.flashColor = C.warm.clone();
     this.autoRotate = true;
-    this.decisionFlash = 0;
-    this.flashColor = PALETTE.high.clone();
+    this.spin = { yaw: -0.6, pitch: 0.12 };
+    this.zoom = 3.3;
     this.clock = new THREE.Clock();
+    this._tmp = new THREE.Object3D();
+    this._col = new THREE.Color();
 
-    this._initRenderer();
-    this._initScene();
-    this._buildHead();
-    this._buildElectrodes();
-    this._buildConnections();
-    this._buildStarfield();
-    this._bindInput();
+    this._renderer();
+    this._scene();
+    this._shell();
+    this._links();
+    this._contacts();
+    this._glow();
+    this._dust();
+    this._input();
 
-    window.addEventListener('resize', () => this._resize());
+    this._ro = new ResizeObserver(() => this._resize());
+    this._ro.observe(container);
     this._resize();
-    this._animate();
+    this._loop();
   }
 
-  // ---------------------------------------------------------------- setup --
+  _renderer() {
+    this.r = new THREE.WebGLRenderer({
+      antialias: true, alpha: true, powerPreference: 'high-performance',
+    });
+    this.r.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+    this.r.setClearColor(0x000000, 0);
+    this.el.appendChild(this.r.domElement);
 
-  _initRenderer() {
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.setClearColor(0x000000, 0);
-    this.container.appendChild(this.renderer.domElement);
-  }
-
-  _initScene() {
-    this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.FogExp2(0x070b14, 0.16);
-
-    this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-    this.camera.position.set(0, 0.9, 4.2);
-
-    this.rig = new THREE.Group();
-    this.scene.add(this.rig);
-
-    this.scene.add(new THREE.AmbientLight(0x2a3550, 1.4));
-    const key = new THREE.PointLight(0x5eead4, 40, 20);
-    key.position.set(4, 5, 5);
-    this.scene.add(key);
-    const rim = new THREE.PointLight(0x7dd3fc, 25, 20);
-    rim.position.set(-5, -2, -4);
-    this.scene.add(rim);
-
-    this.glowTex = glowTexture();
-  }
-
-  /** A translucent shell suggesting the scalp, with a wireframe over it. */
-  _buildHead() {
-    const shell = new THREE.Mesh(
-      new THREE.SphereGeometry(1.0, 64, 48),
-      new THREE.MeshPhysicalMaterial({
-        color: 0x16233d,
-        transparent: true,
-        opacity: 0.22,
-        roughness: 0.35,
-        metalness: 0.1,
-        transmission: 0.6,
-        side: THREE.DoubleSide,
-      }),
-    );
-    shell.scale.set(1.0, 1.05, 1.12); // slightly ovoid, like a head
-    this.rig.add(shell);
-    this.shell = shell;
-
-    const wire = new THREE.Mesh(
-      new THREE.SphereGeometry(1.005, 28, 20),
-      new THREE.MeshBasicMaterial({
-        color: 0x2dd4bf, wireframe: true, transparent: true, opacity: 0.07,
-      }),
-    );
-    wire.scale.copy(shell.scale);
-    this.rig.add(wire);
-    this.wire = wire;
-  }
-
-  /** One sphere plus one additive glow sprite per electrode. */
-  _buildElectrodes() {
-    this.nodes = [];
-    this.glows = [];
-    const sphere = new THREE.SphereGeometry(0.028, 16, 12);
-
-    this.electrodes.forEach((e) => {
-      // Push slightly outward so contacts sit on the shell, not inside it.
-      const p = new THREE.Vector3(e.x, e.y, e.z).multiplyScalar(1.04);
-
-      const mat = new THREE.MeshStandardMaterial({
-        color: PALETTE.idle.clone(),
-        emissive: PALETTE.idle.clone(),
-        emissiveIntensity: 0.6,
-        roughness: 0.4,
-      });
-      const node = new THREE.Mesh(sphere, mat);
-      node.position.copy(p);
-      node.userData = e;
-      this.rig.add(node);
-      this.nodes.push(node);
-
-      const glow = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: this.glowTex,
-        color: PALETTE.mid.clone(),
-        transparent: true,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        opacity: 0.35,
-      }));
-      glow.position.copy(p);
-      glow.scale.setScalar(0.22);
-      this.rig.add(glow);
-      this.glows.push(glow);
+    // Losing the context silently renders an empty frame, which is exactly the
+    // failure that shipped last time. Surface it instead.
+    this.r.domElement.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      this.el.dataset.glLost = '1';
     });
   }
 
-  /** Faint lines between nearby electrodes — reads as a sensor net. */
-  _buildConnections() {
-    const points = [];
-    const limit = 0.42;
+  _scene() {
+    this.scene = new THREE.Scene();
+    this.cam = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
+    this.rig = new THREE.Group();
+    this.scene.add(this.rig);
+    this.glowTex = glowTexture();
+  }
+
+  _shell() {
+    // A dense wireframe reads as a scalp without hiding the contacts inside.
+    const shell = new THREE.LineSegments(
+      new THREE.WireframeGeometry(new THREE.IcosahedronGeometry(1.20, 3)),
+      new THREE.LineBasicMaterial({
+        color: 0x1a4d7a, transparent: true, opacity: 0.16,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      }),
+    );
+    shell.scale.set(1, 1.07, 1.14);
+    this.rig.add(shell);
+    this.shell = shell;
+
+    // Dark interior so front contacts read brighter than the ones behind.
+    const core = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(1.0, 4),
+      new THREE.MeshBasicMaterial({
+        color: 0x061426, transparent: true, opacity: 0.88, side: THREE.BackSide,
+      }),
+    );
+    core.scale.set(1, 1.07, 1.14);
+    this.rig.add(core);
+
+    // The interhemispheric fissure: a bright midline arc that makes the
+    // left/right split legible, which is the whole point of a contralateral
+    // highlight.
+    const curve = [];
+    for (let i = 0; i <= 96; i++) {
+      const a = (i / 96) * Math.PI;
+      curve.push(new THREE.Vector3(0, Math.cos(a) * 1.13, -Math.sin(a) * 1.20));
+    }
+    const midline = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(curve),
+      new THREE.LineBasicMaterial({
+        color: 0x7dd3fc, transparent: true, opacity: 0.30,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      }),
+    );
+    this.rig.add(midline);
+    this.midline = midline;
+  }
+
+  _links() {
+    const pts = [];
     for (let i = 0; i < this.n; i++) {
       const a = this.electrodes[i];
       for (let j = i + 1; j < this.n; j++) {
         const b = this.electrodes[j];
-        const d = Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
-        if (d < limit) {
-          points.push(a.x * 1.04, a.y * 1.04, a.z * 1.04,
-                      b.x * 1.04, b.y * 1.04, b.z * 1.04);
+        if (Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) < 0.46) {
+          pts.push(a.x, a.y, a.z, b.x, b.y, b.z);
         }
       }
     }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(points, 3));
-    this.links = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
-      color: 0x2dd4bf, transparent: true, opacity: 0.12,
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    this.links = new THREE.LineSegments(g, new THREE.LineBasicMaterial({
+      color: 0x22d3ee, transparent: true, opacity: 0.13,
       blending: THREE.AdditiveBlending, depthWrite: false,
     }));
     this.rig.add(this.links);
   }
 
-  _buildStarfield() {
-    const count = 900;
-    const pos = new Float32Array(count * 3);
-    for (let i = 0; i < count; i++) {
-      const r = 8 + Math.random() * 14;
-      const t = Math.random() * Math.PI * 2;
-      const p = Math.acos(2 * Math.random() - 1);
-      pos[i * 3] = r * Math.sin(p) * Math.cos(t);
-      pos[i * 3 + 1] = r * Math.cos(p);
-      pos[i * 3 + 2] = r * Math.sin(p) * Math.sin(t);
+  /** All 64 contacts in a single instanced draw call. */
+  _contacts() {
+    this.dots = new THREE.InstancedMesh(
+      new THREE.SphereGeometry(0.032, 14, 10),
+      new THREE.MeshBasicMaterial({ toneMapped: false }),
+      this.n,
+    );
+    this.dots.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.dots.instanceColor = new THREE.InstancedBufferAttribute(
+      new Float32Array(this.n * 3), 3,
+    );
+    for (let i = 0; i < this.n; i++) {
+      const e = this.electrodes[i];
+      this._tmp.position.set(e.x, e.y, e.z);
+      this._tmp.scale.setScalar(1);
+      this._tmp.updateMatrix();
+      this.dots.setMatrixAt(i, this._tmp.matrix);
+      this.dots.setColorAt(i, C.mid);
     }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    this.stars = new THREE.Points(geo, new THREE.PointsMaterial({
-      color: 0x64748b, size: 0.05, transparent: true, opacity: 0.5,
-      blending: THREE.AdditiveBlending, depthWrite: false,
-    }));
-    this.scene.add(this.stars);
+    this.rig.add(this.dots);
   }
 
-  _bindInput() {
-    const el = this.renderer.domElement;
-    let dragging = false;
+  /** One additive Points cloud carrying the halo for every contact. */
+  _glow() {
+    const pos = new Float32Array(this.n * 3);
+    const col = new Float32Array(this.n * 3);
+    const size = new Float32Array(this.n);
+    for (let i = 0; i < this.n; i++) {
+      const e = this.electrodes[i];
+      pos[i * 3] = e.x; pos[i * 3 + 1] = e.y; pos[i * 3 + 2] = e.z;
+      col[i * 3] = C.mid.r; col[i * 3 + 1] = C.mid.g; col[i * 3 + 2] = C.mid.b;
+      size[i] = 0.4;
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    g.setAttribute('aSize', new THREE.Float32BufferAttribute(size, 1));
+
+    this.glow = new THREE.Points(g, new THREE.ShaderMaterial({
+      uniforms: { uMap: { value: this.glowTex }, uScale: { value: 340 } },
+      vertexShader: `
+        uniform float uScale;
+        attribute float aSize;
+        varying vec3 vColor;
+        void main() {
+          vColor = color;
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          gl_PointSize = aSize * uScale / -mv.z;
+          gl_Position = projectionMatrix * mv;
+        }`,
+      fragmentShader: `
+        uniform sampler2D uMap;
+        varying vec3 vColor;
+        void main() {
+          vec4 t = texture2D(uMap, gl_PointCoord);
+          gl_FragColor = vec4(vColor, 1.0) * t;
+        }`,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      vertexColors: true,
+    }));
+    this.glow.material.uniforms.uScale.value = 340;
+    this.rig.add(this.glow);
+  }
+
+  _dust() {
+    const n = 420;
+    const pos = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      const r = 2.4 + Math.random() * 6.5;
+      const t = Math.random() * Math.PI * 2;
+      const ph = Math.acos(2 * Math.random() - 1);
+      pos[i * 3] = r * Math.sin(ph) * Math.cos(t);
+      pos[i * 3 + 1] = r * Math.cos(ph) * 0.55;
+      pos[i * 3 + 2] = r * Math.sin(ph) * Math.sin(t);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    this.dust = new THREE.Points(g, new THREE.PointsMaterial({
+      color: 0x2f7fb5, size: 0.035, transparent: true, opacity: 0.7,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+    this.scene.add(this.dust);
+  }
+
+  _input() {
+    const el = this.r.domElement;
+    let drag = false;
     let last = { x: 0, y: 0 };
-    this.spin = { x: 0.12, y: 0 };
+    el.style.touchAction = 'none';
+    el.style.cursor = 'grab';
 
-    const down = (x, y) => { dragging = true; last = { x, y }; this.autoRotate = false; };
-    const move = (x, y) => {
-      if (!dragging) return;
-      this.spin.x += (x - last.x) * 0.005;
-      this.spin.y = Math.max(-1.2, Math.min(1.2, this.spin.y + (y - last.y) * 0.005));
-      last = { x, y };
-    };
-    const up = () => { dragging = false; };
-
-    el.addEventListener('pointerdown', (e) => down(e.clientX, e.clientY));
-    window.addEventListener('pointermove', (e) => move(e.clientX, e.clientY));
-    window.addEventListener('pointerup', up);
+    el.addEventListener('pointerdown', (e) => {
+      drag = true; last = { x: e.clientX, y: e.clientY };
+      this.autoRotate = false; el.style.cursor = 'grabbing';
+      el.setPointerCapture(e.pointerId);
+    });
+    el.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      this.spin.yaw += (e.clientX - last.x) * 0.006;
+      this.spin.pitch = Math.max(-1.05, Math.min(1.05,
+        this.spin.pitch + (e.clientY - last.y) * 0.006));
+      last = { x: e.clientX, y: e.clientY };
+    });
+    const stop = () => { drag = false; el.style.cursor = 'grab'; };
+    el.addEventListener('pointerup', stop);
+    el.addEventListener('pointercancel', stop);
     el.addEventListener('wheel', (e) => {
       e.preventDefault();
-      this.camera.position.z = Math.max(2.4, Math.min(7, this.camera.position.z + e.deltaY * 0.002));
+      this.zoom = Math.max(2.2, Math.min(6.0, this.zoom + e.deltaY * 0.002));
     }, { passive: false });
   }
 
   _resize() {
-    const w = this.container.clientWidth;
-    const h = this.container.clientHeight || 460;
-    this.renderer.setSize(w, h, false);
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
+    const w = this.el.clientWidth || 900;
+    const h = this.el.clientHeight || 500;
+    this.r.setSize(w, h, false);
+    this.cam.aspect = w / h;
+    this.cam.updateProjectionMatrix();
+    this.glow.material.uniforms.uScale.value = Math.max(220, h * 0.62);
   }
 
-  // --------------------------------------------------------------- public --
+  // -- public ---------------------------------------------------------------
 
-  /** Feed one window's normalised per-electrode power (array of 0..1). */
   update(bandPower) {
     if (!bandPower || bandPower.length !== this.n) return;
     for (let i = 0; i < this.n; i++) this.target[i] = bandPower[i];
   }
 
   /**
-   * Flash the hemisphere that should respond to a decoded class.
-   * Motor imagery is contralateral, so right-hand imagery highlights the LEFT
-   * hemisphere — the visual says the same thing the physiology does.
+   * Motor imagery is contralateral: right-hand imagery flares the LEFT
+   * hemisphere. The visual asserts the same physiology the ERD plots measure.
    */
   flash(label) {
     const l = (label || '').toLowerCase();
-    if (l.includes('right')) { this.flashSide = 'left_motor'; this.flashColor = PALETTE.left.clone(); }
-    else if (l.includes('left')) { this.flashSide = 'right_motor'; this.flashColor = PALETTE.right.clone(); }
-    else { this.flashSide = 'midline_motor'; this.flashColor = PALETTE.hot.clone(); }
-    this.decisionFlash = 1.0;
+    if (l.includes('right')) { this.flashSide = 'left_motor'; this.flashColor = C.left.clone(); }
+    else if (l.includes('left')) { this.flashSide = 'right_motor'; this.flashColor = C.right.clone(); }
+    else { this.flashSide = 'midline_motor'; this.flashColor = C.peak.clone(); }
+    this.flashAmount = 1;
   }
 
   reset() {
-    this.power.fill(0.5);
-    this.target.fill(0.5);
-    this.decisionFlash = 0;
+    this.power.fill(0.45);
+    this.target.fill(0.45);
+    this.flashAmount = 0;
   }
 
   dispose() {
     cancelAnimationFrame(this._raf);
-    this.renderer.dispose();
-    if (this.renderer.domElement.parentNode) {
-      this.renderer.domElement.parentNode.removeChild(this.renderer.domElement);
-    }
+    this._ro.disconnect();
+    this.r.dispose();
+    this.r.domElement.remove();
   }
 
-  // ---------------------------------------------------------------- loop ---
+  // -- loop -----------------------------------------------------------------
 
-  _animate() {
-    this._raf = requestAnimationFrame(() => this._animate());
+  _loop() {
+    this._raf = requestAnimationFrame(() => this._loop());
     const dt = Math.min(this.clock.getDelta(), 0.05);
     const t = this.clock.elapsedTime;
 
-    if (this.autoRotate) this.spin.x += dt * 0.18;
-    this.rig.rotation.y = this.spin.x;
-    this.rig.rotation.x = this.spin.y;
-    this.stars.rotation.y = -this.spin.x * 0.15;
+    if (this.autoRotate) this.spin.yaw += dt * 0.2;
+    this.rig.rotation.set(this.spin.pitch, this.spin.yaw, 0);
+    this.dust.rotation.y = -this.spin.yaw * 0.18;
 
-    // Ease measured power toward its target so the scene breathes rather than
-    // snapping between windows.
-    const ease = 1 - Math.exp(-dt * 6);
-    this.decisionFlash = Math.max(0, this.decisionFlash - dt * 1.6);
+    // Always look at the centre. Omitting this is what rendered an empty frame.
+    this.cam.position.set(0, 0.3, this.zoom);
+    this.cam.lookAt(0, 0, 0);
 
-    const c = new THREE.Color();
+    const ease = 1 - Math.exp(-dt * 7);
+    this.flashAmount = Math.max(0, this.flashAmount - dt * 1.4);
+
+    const gcol = this.glow.geometry.attributes.color.array;
+    const gsize = this.glow.geometry.attributes.aSize.array;
+
     for (let i = 0; i < this.n; i++) {
       this.power[i] += (this.target[i] - this.power[i]) * ease;
       const v = this.power[i];
 
-      // Blue -> cyan -> mint as band power rises.
-      if (v < 0.5) c.copy(PALETTE.low).lerp(PALETTE.mid, v * 2);
-      else c.copy(PALETTE.mid).lerp(PALETTE.high, (v - 0.5) * 2);
-
-      const node = this.nodes[i];
-      const glow = this.glows[i];
-      const region = node.userData.region;
+      if (v < 0.38) this._col.copy(C.cold).lerp(C.mid, v / 0.38);
+      else if (v < 0.68) this._col.copy(C.mid).lerp(C.warm, (v - 0.38) / 0.30);
+      else this._col.copy(C.warm).lerp(C.hot, (v - 0.68) / 0.32);
+      if (v > 0.90) this._col.lerp(C.peak, (v - 0.90) / 0.10);
 
       let boost = 0;
-      if (this.decisionFlash > 0 && region === this.flashSide) {
-        boost = this.decisionFlash;
-        c.lerp(this.flashColor, 0.75 * boost);
+      if (this.flashAmount > 0 && this.electrodes[i].region === this.flashSide) {
+        boost = this.flashAmount;
+        this._col.lerp(this.flashColor, 0.85 * boost);
       }
 
-      node.material.color.copy(c);
-      node.material.emissive.copy(c);
-      node.material.emissiveIntensity = 0.5 + v * 1.9 + boost * 2.2;
+      const breathe = 1 + 0.10 * Math.sin(t * 2.2 + i * 0.5);
+      const e = this.electrodes[i];
 
-      const pulse = 1 + 0.06 * Math.sin(t * 3 + i * 0.4);
-      node.scale.setScalar((0.85 + v * 0.9 + boost * 1.1) * pulse);
+      this._tmp.position.set(e.x, e.y, e.z);
+      this._tmp.scale.setScalar((0.80 + v * 0.75 + boost * 1.7) * breathe);
+      this._tmp.updateMatrix();
+      this.dots.setMatrixAt(i, this._tmp.matrix);
+      this.dots.setColorAt(i, this._col);
 
-      glow.material.color.copy(c);
-      glow.material.opacity = 0.14 + v * 0.5 + boost * 0.5;
-      glow.scale.setScalar((0.16 + v * 0.34 + boost * 0.4) * pulse);
+      const k = i * 3;
+      const lift = 0.55 + v * 1.85 + boost * 2.6;
+      gcol[k] = this._col.r * lift;
+      gcol[k + 1] = this._col.g * lift;
+      gcol[k + 2] = this._col.b * lift;
+      gsize[i] = (0.42 + v * 0.70 + boost * 1.25) * breathe;
     }
 
-    const breathe = 1 + 0.012 * Math.sin(t * 1.3);
-    this.shell.scale.set(1.0 * breathe, 1.05 * breathe, 1.12 * breathe);
-    this.links.material.opacity = 0.08 + 0.10 * (0.5 + 0.5 * Math.sin(t * 0.9));
+    this.dots.instanceMatrix.needsUpdate = true;
+    if (this.dots.instanceColor) this.dots.instanceColor.needsUpdate = true;
+    this.glow.geometry.attributes.color.needsUpdate = true;
+    this.glow.geometry.attributes.aSize.needsUpdate = true;
 
-    this.renderer.render(this.scene, this.camera);
+    this.links.material.opacity = 0.14 + 0.10 * (0.5 + 0.5 * Math.sin(t * 1.1));
+    this.shell.material.opacity = 0.12 + 0.08 * (0.5 + 0.5 * Math.sin(t * 0.65));
+    this.midline.material.opacity = 0.22 + 0.30 * this.flashAmount;
+
+    this.r.render(this.scene, this.cam);
   }
 }
