@@ -1,97 +1,104 @@
 {% extends "base.html" %}
 {% block title %}Brainwave-to-Text &mdash; Live cortical decoder{% endblock %}
 
+{% block fullbleed %}
+<div class="atlas">
+  <aside class="atlas-col">
+    <div class="plate-no">PL. II &mdash; CORTEX, AREA 4 &middot; MOTOR</div>
+    <h1 class="atlas-title">Live cortical decoder</h1>
+    <p class="atlas-lede">
+      Every structure is inked by the recording itself: each contact's measured
+      mu/beta power is attributed to the part of the cortex it sits over. When a
+      decision commits, the hemisphere that <em>should</em> respond darkens
+      &mdash; motor imagery is contralateral, so imagining your right hand cuts
+      into the left motor cortex.
+    </p>
+
+    <section class="panel">
+      <h2>Source</h2>
+      <form id="form">
+        <label class="dropzone" id="zone" for="file">
+          <div><strong>Choose an .edf file</strong> or drop it here</div>
+          <div class="muted" style="font-size:0.82rem">
+            {{ model.n_channels }} channels &middot; {{ '%g' % model.sfreq }} Hz
+          </div>
+          <div class="filename" id="filename"></div>
+          <input type="file" id="file" accept=".edf" />
+        </label>
+
+        <div class="controls controls-stack mt">
+          <label>Replay speed
+            <select id="speed">
+              <option value="0">As fast as possible</option>
+              <option value="1">1&times; real time</option>
+              <option value="4" selected>4&times;</option>
+              <option value="10">10&times;</option>
+            </select>
+          </label>
+          <label>Window step
+            <select id="step">
+              <option value="0.25">0.25 s</option>
+              <option value="0.5" selected>0.5 s</option>
+              <option value="1.0">1.0 s</option>
+            </select>
+          </label>
+          <label>Commit threshold
+            <select id="threshold">
+              <option value="0.75">0.75 (fast)</option>
+              <option value="0.9" selected>0.90 (balanced)</option>
+              <option value="0.99">0.99 (careful)</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="row mt">
+          <button class="btn" id="start" type="submit" disabled>Start decoding</button>
+          <button class="btn btn-ghost" id="stop" type="button" disabled>Stop</button>
+        </div>
+        <div class="muted mono" id="status" style="font-size:0.78rem;margin-top:0.6rem">Idle</div>
+      </form>
+    </section>
+  </aside>
+
+  <!-- The specimen owns the middle of the page. The camera frames itself to
+       this element, so the brain is centred here rather than in the viewport. -->
+  <div class="atlas-stage" id="stage">
+    <!-- Marks sit at the head of the plate: the caption must never cover the
+         specimen, and the foot belongs to the written line. -->
+    <div class="stage-marks">
+      <span class="ov-chip" id="ov-status">idle</span>
+      <span class="ov-chip ov-quiet" id="ov-time">0.0s</span>
+      <span class="ov-text" id="ov-text"></span>
+    </div>
+    <div class="stage-foot">
+      <div class="stage-hint">drag to turn the specimen &middot; click a structure to name it</div>
+    </div>
+  </div>
+
+  <aside class="atlas-col">
+    <section class="panel">
+      <h2>Spelled text</h2>
+      <div class="decoded" id="text"><span class="empty">Nothing committed yet.</span></div>
+      <div class="candidates mt" id="candidates"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Evidence</h2>
+      <div id="bars"></div>
+    </section>
+
+    <section class="panel panel-grow">
+      <h2>Structures</h2>
+      <ul class="keyed" id="keyed"></ul>
+    </section>
+  </aside>
+</div>
+{% endblock %}
+
 {% block content %}
-<div class="hero" data-plate="PL. II &mdash; CORTEX, AREA 4 &middot; MOTOR">
-  <h1 class="hero-title">Live cortical decoder</h1>
-  <p class="lede">
-    The plate is drawn from the recording as it plays. Every soma is a real
-    electrode at its true montage coordinate, and the ink weight of its stipple
-    is live mu/beta power. When a decision commits, the hemisphere that
-    <em>should</em> respond washes in oxblood &mdash; motor imagery is
-    contralateral, so imagining your right hand inks the left cortex.
-  </p>
-</div>
-
-<div class="stage-wrap">
-  <div class="ov-top">
-    <span class="ov-chip" id="ov-status">idle</span>
-    <span class="ov-chip ov-quiet" id="ov-time">0.0s</span>
-  </div>
-  <div class="ov-text" id="ov-text"></div>
-  <div class="ov-bottom">
-    <span class="ov-hint">drag to turn the specimen &middot; click a structure to name it</span>
-  </div>
-</div>
-
 <div class="card">
-  <h2>Structures</h2>
-  <p class="muted" style="margin-top:0;font-size:0.9rem">
-    Live mu/beta power from the uploaded recording, attributed to the structure
-    each contact sits over. Select a row to hold it on the specimen.
-  </p>
-  <ul class="keyed" id="keyed"></ul>
-</div>
-
-<div class="card">
-  <h2>Source</h2>
-  <form id="form">
-    <label class="dropzone" id="zone" for="file">
-      <div><strong>Choose an .edf file</strong> or drop it here</div>
-      <div class="muted" style="font-size:0.85rem">
-        {{ model.n_channels }} channels &middot; {{ '%g' % model.sfreq }} Hz
-      </div>
-      <div class="filename" id="filename"></div>
-      <input type="file" id="file" accept=".edf" />
-    </label>
-
-    <div class="controls mt">
-      <label>Replay speed
-        <select id="speed">
-          <option value="0">As fast as possible</option>
-          <option value="1">1&times; real time</option>
-          <option value="4" selected>4&times;</option>
-          <option value="10">10&times;</option>
-        </select>
-      </label>
-      <label>Window step
-        <select id="step">
-          <option value="0.25">0.25 s</option>
-          <option value="0.5" selected>0.5 s</option>
-          <option value="1.0">1.0 s</option>
-        </select>
-      </label>
-      <label>Commit threshold
-        <select id="threshold">
-          <option value="0.75">0.75 (fast)</option>
-          <option value="0.9" selected>0.90 (balanced)</option>
-          <option value="0.99">0.99 (careful)</option>
-        </select>
-      </label>
-    </div>
-
-    <div class="row mt">
-      <button class="btn" id="start" type="submit" disabled>Start decoding</button>
-      <button class="btn btn-ghost" id="stop" type="button" disabled>Stop</button>
-      <span class="muted" id="status" style="font-size:0.85rem">Idle</span>
-    </div>
-  </form>
-</div>
-
-<div class="card">
-  <h2>Spelled text</h2>
-  <div class="decoded" id="text"><span class="empty">Nothing committed yet.</span></div>
-  <div class="candidates mt" id="candidates"></div>
-</div>
-
-<div class="card">
-  <h2>Evidence</h2>
-  <p class="muted" style="margin-top:0;font-size:0.88rem">
-    Live posterior over classes. A decision commits when a bar crosses the
-    threshold; the accumulator then resets.
-  </p>
-  <div id="bars"></div>
-  <div class="metrics mt">
+  <h2>Accumulator</h2>
+  <div class="metrics">
     <div class="metric">
       <div class="label">Windows</div>
       <div class="value" id="m-windows">0</div>
@@ -160,7 +167,9 @@ window.neuralWorld.then((env) => {
   els.ovStatus.textContent = env
     ? document.documentElement.dataset.channels + ' electrodes'
     : 'no webgl';
-  if (env) buildKeyed(env);
+  if (!env) return;
+  env.setStage(document.getElementById('stage'));
+  buildKeyed(env);
 });
 
 // ---- structure key: live activity, and a second way to select -------------

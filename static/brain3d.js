@@ -36,6 +36,10 @@ const MAX_CHARS = 22;
 const SEG_PER_GLYPH = 18;
 const GLYPH_SIZE = 0.085;
 const MAX_PINS = 9;
+// The specimen spans about y -0.88 (brainstem) to +0.60 (vertex), so it is not
+// centred on the origin and must be framed about its own middle.
+const SPECIMEN_HALF = 0.80;
+const SPECIMEN_CENTRE_Y = -0.13;
 
 const INK = new THREE.Color('#241c14');
 const SEPIA = new THREE.Color('#6d5333');
@@ -327,8 +331,10 @@ export class NeuralEnvironment {
 
     this.scroll = 0;
     this.scrollEased = 0;
-    this.yaw = -0.6;
-    this.pitch = 0.08;
+    // Left lateral view: the one an atlas plate is drawn from.
+    this.yaw = -1.30;
+    this.pitch = 0.06;
+    this.turned = false;
     this.drag = { active: false, x: 0, y: 0, moved: 0 };
     this.pointer = { x: 0, y: 0 };
     this.ndc = new THREE.Vector2();
@@ -511,8 +517,8 @@ export class NeuralEnvironment {
     // Placed against the real cortex: tucked below the occipital lobe and
     // behind the temporal lobes. fsaverage's pial surface is cortex only, so
     // the cerebellum and stem stay generated.
-    const C = { x: 0, y: -0.44, z: 0.56 };
-    const R = { x: 0.45, y: 0.22, z: 0.28 };
+    const C = { x: 0, y: -0.40, z: 0.62 };
+    const R = { x: 0.40, y: 0.21, z: 0.27 };
     const detail = this.soft ? 3 : 5;
     this.cerebellumMesh = this._shell(
       detail,
@@ -524,7 +530,9 @@ export class NeuralEnvironment {
         _bs.x = C.x + dx * R.x * k;
         _bs.y = C.y + dy * R.y * k;
         _bs.z = C.z + dz * R.z * k;
-        _bs.fold = Math.min(1, Math.max(0, -folia) * 0.9 + vermis * 0.6);
+        // Lighter than the cortex: it sits in the cortex's shadow already, and
+        // at full weight it fills in as a solid black ball.
+        _bs.fold = Math.min(1, Math.max(0, -folia) * 0.45 + vermis * 0.35);
         return _bs;
       },
       () => REGION.CEREBELLUM,
@@ -799,6 +807,7 @@ export class NeuralEnvironment {
       const dx = e.clientX - this.drag.x;
       const dy = e.clientY - this.drag.y;
       this.drag.moved += Math.abs(dx) + Math.abs(dy);
+      if (this.drag.moved > 6) this.turned = true;
       this.yaw += dx * 0.006;
       this.pitch = Math.max(-1.1, Math.min(1.1, this.pitch + dy * 0.005));
       this.drag.x = e.clientX; this.drag.y = e.clientY;
@@ -837,6 +846,51 @@ export class NeuralEnvironment {
       this.hovered = region;
     }
     return region;
+  }
+
+  /** The element the specimen should be centred in and fitted to. */
+  setStage(el) {
+    this.stageEl = el || null;
+  }
+
+  /**
+   * Camera framing for the current stage box. The specimen sits at the world
+   * origin, so putting it somewhere other than the middle of the screen means
+   * moving the camera the opposite way: one pixel of offset is one
+   * `worldPerPixel` of camera shift.
+   */
+  _frame() {
+    const vw = innerWidth;
+    const vh = innerHeight;
+    let cx = vw / 2;
+    let cy = vh / 2;
+    let boxH = vh * 0.72;
+    let boxW = vw * 0.55;
+
+    if (this.stageEl) {
+      const r = this.stageEl.getBoundingClientRect();
+      if (r.width > 8 && r.height > 8) {
+        cx = r.left + r.width / 2;
+        cy = r.top + r.height / 2;
+        boxH = r.height;
+        boxW = r.width;
+      }
+    }
+
+    const half = Math.tan((this.cam.fov * Math.PI) / 360);
+    // Fit by whichever axis binds first, so a tall narrow column does not
+    // push the specimen out of its sides.
+    const needV = SPECIMEN_HALF / (boxH / vh);
+    const needH = SPECIMEN_HALF / ((boxW / vw) * this.cam.aspect);
+    const dist = (Math.max(needV, needH) * 1.14) / half;
+    const wpp = (2 * dist * half) / vh;
+
+    return {
+      dist,
+      x: -(cx - vw / 2) * wpp,
+      y: (cy - vh / 2) * wpp,
+      cx, cy, boxH, half, vw, vh,
+    };
   }
 
   _onScroll() {
@@ -962,23 +1016,30 @@ export class NeuralEnvironment {
     const dt = Math.min(this.clock.getDelta(), 0.05);
     const t = this.clock.elapsedTime;
 
-    this.scrollEased += (this.scroll - this.scrollEased) * (1 - Math.exp(-dt * 4));
-    const s = this.scrollEased;
+    if (!this.drag.active) this._pick(false);
 
-    if (!this.drag.active) {
-      this.yaw += dt * 0.06;
-      this._pick(false);
-    }
-    this.rig.position.x = 0.30 * (1 - s);
-    this.rig.rotation.x = this.pitch + s * 0.30;
-    this.rig.rotation.y = this.yaw;
+    // Until it is turned by hand the specimen sways about a lateral view
+    // rather than spinning freely: a plate should always be recognisable as
+    // one, and a free spin catches it at arbitrary, unreadable angles.
+    const sway = this.turned ? 0 : 0.30 * Math.sin(t * 0.13);
+    this.rig.rotation.x = this.pitch;
+    this.rig.rotation.y = this.yaw + sway;
 
-    this.cam.position.set(
-      this.pointer.x * 0.12,
-      0.22 + s * 0.45,
-      2.95 - s * 1.15,
+    // The specimen is centred on the stage and stays put: it is a mounted
+    // figure, not something the page scrolls past.
+    const f = this._frame();
+    const ty = f.y + SPECIMEN_CENTRE_Y;
+    this.cam.position.set(f.x + this.pointer.x * 0.05, ty - this.pointer.y * 0.04, f.dist);
+    this.cam.lookAt(f.x, ty, 0);
+
+    // Keep the written line under the stage rather than under the viewport.
+    const wpp2 = (2 * 2.0 * f.half) / f.vh;
+    this.margin.position.set(
+      (f.cx - f.vw / 2) * wpp2,
+      -((f.cy + f.boxH / 2 - 30) - f.vh / 2) * wpp2,
+      -2.0,
     );
-    this.cam.lookAt(0, s * 0.10, 0);
+    this.rule.position.copy(this.margin.position);
 
     const ease = 1 - Math.exp(-dt * 7);
     this.flashAmount = Math.max(0, this.flashAmount - dt * 1.0);

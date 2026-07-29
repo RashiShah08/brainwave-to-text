@@ -336,6 +336,92 @@ dl.spec dd {
     var(--ink-2) 0 1.5px, transparent 1.5px 4px);
 }
 
+/* ── atlas spread ────────────────────────────────────────────────────── */
+/* Figure in the middle, marginalia either side — the way an anatomy atlas
+   sets a plate. The specimen gets the whole centre column and the camera
+   frames itself to it, so nothing overlaps the brain. */
+
+.atlas {
+  position: relative; z-index: 2;
+  width: min(1680px, 100% - 3rem); margin-inline: auto;
+  display: grid;
+  grid-template-columns: minmax(16rem, 20rem) minmax(0, 1fr) minmax(17rem, 21rem);
+  gap: 1.9rem;
+  height: calc(100vh - 54px);
+  padding: 1.4rem 0 1.6rem;
+  align-items: stretch;
+}
+
+.atlas-col {
+  display: flex; flex-direction: column; gap: 1rem;
+  min-height: 0; overflow-y: auto; overflow-x: hidden;
+  padding-right: 0.35rem;
+  scrollbar-width: thin;
+}
+
+.plate-no {
+  font-family: var(--type); font-size: 10px; letter-spacing: 0.22em;
+  text-transform: uppercase; color: var(--sepia);
+  padding-bottom: 0.6rem; border-bottom: 1px solid var(--rule-2);
+}
+.atlas-title {
+  font-family: var(--serif); font-weight: 400;
+  font-size: clamp(1.7rem, 2.4vw, 2.3rem); line-height: 1.08;
+  letter-spacing: -0.012em; margin: 0.9rem 0 0.5rem; color: var(--ink);
+}
+.atlas-lede {
+  margin: 0; font-size: 0.9rem; line-height: 1.55;
+  color: var(--ink-2); font-style: italic;
+}
+
+/* The stage holds no content of its own beyond a few marks — the brain is
+   drawn by the fixed canvas behind it, framed to this box. */
+.atlas-stage {
+  position: relative; min-height: 0;
+  display: flex; flex-direction: column; justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0 0.75rem;
+  pointer-events: none;
+}
+.atlas-stage > * { pointer-events: auto; }
+.stage-marks {
+  align-self: stretch; display: flex; gap: 0.6rem; align-items: center;
+}
+.atlas-stage .ov-text {
+  margin-left: auto; align-self: center;
+  font-size: clamp(0.8rem, 1.1vw, 1rem); letter-spacing: 0.26em;
+  padding: 0.35rem 0.5rem 0.35rem 0.8rem;
+}
+.stage-foot {
+  display: flex; flex-direction: column; align-items: center; gap: 0.55rem;
+}
+.stage-hint {
+  font-family: var(--type); font-size: 9.5px; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--ink-3);
+}
+html[data-world="off"] .stage-hint::after { content: " — plate unavailable"; }
+
+.panel {
+  border: 1px solid var(--rule-2);
+  background: rgba(229, 218, 193, 0.82);
+  padding: 0.95rem 1.05rem 1.1rem;
+  box-shadow: 4px 5px 0 -3px rgba(80, 62, 32, 0.11);
+}
+.panel h2 { margin-bottom: 0.75rem; }
+.panel-grow { flex: 1 1 auto; min-height: 8rem; }
+
+.controls-stack { flex-direction: column; gap: 0.75rem; }
+.controls-stack select { width: 100%; }
+
+@media (max-width: 1180px) {
+  .atlas {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 62vh auto;
+    height: auto;
+  }
+  .atlas-col { overflow: visible; }
+}
+
 /* ── structure key ───────────────────────────────────────────────────── */
 
 .keyed { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule); }
