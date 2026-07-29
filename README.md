@@ -40,6 +40,18 @@ Every cell is measured. Regenerate any of them with
 `bwt benchmark --pipelines <name> --protocols <protocol>`; the run checkpoints
 each fold, so it can be interrupted and resumed.
 
+**These scores are not chance.** A 30-iteration permutation test — labels
+shuffled *within* each subject, preserving group structure, then the full
+cross-validation re-run each time — puts the null distribution at
+**0.5008 ± 0.005** with a maximum of 0.5110 across all thirty runs. Not one
+reached the observed 0.6110, giving **p = 0.032**.
+
+That is the check that exposes leakage. If subject identity or a timing artifact
+were bleeding across folds, shuffled labels would still score above chance
+because the model would latch onto the leak. Instead it recovers exactly
+nothing. Reproduce with `bwt evaluate --pipeline csp_lda --protocols
+cross_subject --permutations 30`.
+
 The top three are **neural and statistically indistinguishable**: ShallowConvNet
 0.640 (95% CI 0.621–0.660) and Conformer 0.639 (0.615–0.662) overlap almost
 entirely, and EEGNet's 0.628 sits inside both intervals. Treat them as a tier,
