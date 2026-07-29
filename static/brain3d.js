@@ -160,14 +160,14 @@ const TISSUE_VERT = `
   uniform vec3  uHiCol[${N_REGIONS}];
   varying vec3 vN;
   varying vec3 vP;
-  varying float vDepth;
+  varying float vSulc;
   varying float vHi;
   varying vec3 vHiCol;
   void main() {
     int r = int(aRegion + 0.5);
     vHi = uHi[r];
     vHiCol = uHiCol[r];
-    vDepth = aDepth;
+    vSulc = aDepth;
     vN = normalize(normalMatrix * normal);
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
     vP = mv.xyz;
@@ -175,65 +175,65 @@ const TISSUE_VERT = `
   }`;
 
 /**
- * Engraved tissue.
+ * Lit tissue.
  *
- * Tone is not painted, it is cut: three sets of parallel strokes are laid down
- * in the picture plane and widened as the surface turns away from the light,
- * so shadow becomes denser hatching and then cross-hatching. That is how a
- * steel engraving renders form, and screen-space is the right space for it —
- * a burin cuts in the plane of the plate, not along the specimen.
+ * An engraved version of this was tried and abandoned: hatching at fixed
+ * screen angles described nothing, hatching along level sets of convexity came
+ * out as a contour map, and rotating each stroke to follow the surface
+ * gradient collapsed into grey fur at any real stroke density. A folded
+ * surface this fine simply does not survive being drawn in lines — so it is
+ * lit instead, and the plate character stays in the paper and the type.
  *
- * Nothing is discarded: unlit fragments still write depth, so the paper shows
- * between strokes without the far side of the brain bleeding through the gaps.
+ * Three lights, none of them physical: a warm key, a cool fill from below to
+ * keep the underside from dying, and paper bounce along the silhouette so the
+ * specimen sits on the page rather than floating over it. The one thing doing
+ * the real work is `aDepth` — FreeSurfer's measured sulcal convexity, used
+ * directly as occlusion. No shadow pass would be affordable here, and none is
+ * needed: the folds are legible because the data already knows how deep they
+ * are.
  */
 const TISSUE_FRAG = `
-  uniform vec3 uInk;
-  uniform float uPR;
+  uniform vec3 uLit;
+  uniform vec3 uMid;
+  uniform vec3 uShade;
+  uniform vec3 uPaper;
   varying vec3 vN;
   varying vec3 vP;
-  varying float vDepth;
+  varying float vSulc;
   varying float vHi;
   varying vec3 vHiCol;
-
-  float lines(vec2 p, float a, float f) {
-    float v = p.x * cos(a) + p.y * sin(a);
-    return abs(fract(v * f) - 0.5) * 2.0;
-  }
-
-  // One stroke set. w is how wide the inked band is; 0 means not engraved.
-  float layer(vec2 p, float a, float f, float w) {
-    if (w <= 0.002) return 0.0;
-    return 1.0 - smoothstep(w - 0.10, w + 0.10, lines(p, a, f));
-  }
 
   void main() {
     vec3 N = normalize(vN);
     vec3 V = normalize(-vP);
-    vec3 L = normalize(vec3(-0.45, 0.74, 0.60));
+    vec3 K = normalize(vec3(-0.48, 0.74, 0.60));   // key, high and to the left
+    vec3 F = normalize(vec3(0.70, -0.30, 0.40));   // fill, low and opposite
 
-    // Generous ambient. A plate is mostly bare paper — without a high floor
-    // here every surface facing away from the light fills in solid black.
-    float wrap = dot(N, L) * 0.5 + 0.5;
-    float tone = 0.30 + 0.70 * pow(clamp(wrap, 0.0, 1.0), 1.35);
-    tone *= 1.0 - vDepth * 0.50;               // sulci hold ink
-    float dk = clamp(1.0 - tone, 0.0, 1.0);
+    float depth = clamp(vSulc, 0.0, 1.0);
 
-    vec2 sp = gl_FragCoord.xy / uPR;
-    float F = 0.22;                            // ~4.5 px between strokes
-    float W = 0.34;                            // strokes stay thin
-    float ink = layer(sp,  0.62, F,        clamp(dk * 0.62, 0.0, W));
-    ink = max(ink, layer(sp, -0.72, F,        clamp((dk - 0.40) * 0.85, 0.0, W)));
-    ink = max(ink, layer(sp,  1.50, F * 1.3,  clamp((dk - 0.72) * 1.10, 0.0, W)));
-    ink = max(ink, smoothstep(0.95, 1.0, dk));  // solid only in the deepest
+    // Wrapped key: tissue scatters, so the terminator is soft rather than a
+    // hard edge, and the shadow side keeps some colour.
+    float kw = dot(N, K) * 0.5 + 0.5;
+    float kd = max(dot(N, K), 0.0);
+    float fd = max(dot(N, F), 0.0);
 
-    // Engravings outline the form; without this the silhouette dissolves.
+    vec3 col = mix(uShade, uMid, pow(clamp(kw, 0.0, 1.0), 1.20));
+    col = mix(col, uLit, kd * 0.80);
+    col += uMid * fd * 0.20;
+
+    // Sulcal occlusion, straight from the measured convexity. This is what
+    // makes the convolutions read.
+    col *= 1.0 - depth * 0.62;
+
+    // A damp sheen on the crowns only — a fixed specimen is wet, not glossy.
+    float spec = pow(max(dot(reflect(-K, N), V), 0.0), 34.0);
+    col += vec3(1.0) * spec * 0.11 * (1.0 - depth);
+
     float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0);
-    ink = max(ink, smoothstep(0.62, 0.97, rim));
+    col = mix(col, uPaper * 0.92, rim * 0.34);
 
-    // A highlighted region is cut harder as well as recoloured, so it still
-    // reads as emphasis and not merely as a different hue.
-    ink = clamp(ink + vHi * 0.38, 0.0, 1.0);
-    gl_FragColor = vec4(mix(uInk, vHiCol, clamp(vHi, 0.0, 1.0) * 0.92), ink);
+    col = mix(col, vHiCol, clamp(vHi, 0.0, 1.0) * 0.78);
+    gl_FragColor = vec4(col, 1.0);
   }`;
 
 const FOG = `
@@ -402,16 +402,15 @@ export class NeuralEnvironment {
       uniforms: {
         uHi: { value: this.uHi },
         uHiCol: { value: this.uHiCol },
-        uInk: { value: new THREE.Color('#3a2a1c') },
-        uPR: { value: 1 },
+        // Muted anatomical tones, kept in the paper's family so the specimen
+        // belongs to the plate rather than sitting on top of it.
+        uLit: { value: new THREE.Color('#d8c6b4') },
+        uMid: { value: new THREE.Color('#a98d78') },
+        uShade: { value: new THREE.Color('#54423a') },
+        uPaper: { value: new THREE.Color('#ece3cf') },
       },
       vertexShader: TISSUE_VERT,
       fragmentShader: TISSUE_FRAG,
-      // Paper shows between the strokes, but depth is still written so the
-      // far side cannot show through the gaps.
-      transparent: true,
-      depthWrite: true,
-      depthTest: true,
     });
   }
 
@@ -519,7 +518,9 @@ export class NeuralEnvironment {
     // the cerebellum and stem stay generated.
     const C = { x: 0, y: -0.40, z: 0.62 };
     const R = { x: 0.40, y: 0.21, z: 0.27 };
-    const detail = this.soft ? 3 : 5;
+    // Below 5 the facets show: it is a small smooth blob next to real cortex,
+    // so any faceting on it is the first thing the eye finds.
+    const detail = this.soft ? 5 : 6;
     this.cerebellumMesh = this._shell(
       detail,
       (dx, dy, dz) => {
@@ -530,9 +531,9 @@ export class NeuralEnvironment {
         _bs.x = C.x + dx * R.x * k;
         _bs.y = C.y + dy * R.y * k;
         _bs.z = C.z + dz * R.z * k;
-        // Lighter than the cortex: it sits in the cortex's shadow already, and
-        // at full weight it fills in as a solid black ball.
-        _bs.fold = Math.min(1, Math.max(0, -folia) * 0.45 + vermis * 0.35);
+        // Occlusion only, so just the grooves: lighter than the cortex, which
+        // already casts it into shadow.
+        _bs.fold = Math.min(1, Math.max(0, -folia) * 0.55 + vermis * 0.45);
         return _bs;
       },
       () => REGION.CEREBELLUM,
@@ -542,7 +543,7 @@ export class NeuralEnvironment {
   _stem() {
     const top = { x: 0, y: -0.20, z: 0.16 };
     const bot = { x: 0, y: -0.88, z: 0.30 };
-    const detail = this.soft ? 3 : 4;
+    const detail = this.soft ? 4 : 5;
     this.stemMesh = this._shell(
       detail,
       (dx, dy, dz) => {
@@ -554,7 +555,7 @@ export class NeuralEnvironment {
         _bs.x = top.x + (bot.x - top.x) * t + (dx / ring) * rad * bulge;
         _bs.y = top.y + (bot.y - top.y) * t;
         _bs.z = top.z + (bot.z - top.z) * t + (dz / ring) * rad * bulge * 0.85;
-        _bs.fold = 0.10;
+        _bs.fold = 0.12;
         return _bs;
       },
       () => REGION.BRAINSTEM,
@@ -868,12 +869,19 @@ export class NeuralEnvironment {
     let boxW = vw * 0.55;
 
     if (this.stageEl) {
+      // Frame to the part of the stage actually on screen. The canvas is
+      // fixed to the viewport, so on a stacked layout the stage can run below
+      // the fold — centring on the whole box then crops the specimen.
       const r = this.stageEl.getBoundingClientRect();
-      if (r.width > 8 && r.height > 8) {
-        cx = r.left + r.width / 2;
-        cy = r.top + r.height / 2;
-        boxH = r.height;
-        boxW = r.width;
+      const l = Math.max(0, r.left);
+      const t = Math.min(vw, r.right);
+      const top = Math.max(0, r.top);
+      const bot = Math.min(vh, r.bottom);
+      if (t - l > 8 && bot - top > 8) {
+        cx = (l + t) / 2;
+        cy = (top + bot) / 2;
+        boxW = t - l;
+        boxH = bot - top;
       }
     }
 
@@ -905,8 +913,6 @@ export class NeuralEnvironment {
     this.cam.aspect = w / h;
     this.cam.updateProjectionMatrix();
     this.sites.material.uniforms.uScale.value = Math.max(64, h * 0.055);
-    // Stroke spacing is in CSS pixels, so it must not change with DPI.
-    this.tissueMat.uniforms.uPR.value = this.r.getPixelRatio();
   }
 
   // -- public ---------------------------------------------------------------

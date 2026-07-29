@@ -117,13 +117,20 @@ def _annot_regions(subjects_dir: Path, hemi: str, vertno: np.ndarray) -> np.ndar
 
 
 def _sulcal_depth(subjects_dir: Path, hemi: str, vertno: np.ndarray) -> np.ndarray:
-    """Normalised sulcal depth in 0..1, where 1 is the floor of a sulcus."""
+    """Signed sulcal convexity, scaled so ~1.0 is the floor of a deep sulcus.
+
+    Deliberately *not* clamped. The viewer needs both halves of this: clamped
+    to 0..1 it is shading depth, and left signed it is the scalar field whose
+    contours the engraving hatches along. Level sets of convexity run around
+    each gyrus, which is how an engraver lays strokes on a folded surface —
+    hatching at fixed screen angles instead reads as flat texture.
+    """
     from nibabel.freesurfer.io import read_morph_data
 
     path = subjects_dir / "fsaverage" / "surf" / f"{hemi}.sulc"
     sulc = read_morph_data(str(path))[vertno].astype(np.float32)
     # FreeSurfer convexity is positive in sulci. ~6 mm covers the usable range.
-    return np.clip(sulc / 6.0, 0.0, 1.0)
+    return np.clip(sulc / 6.0, -2.0, 2.0)
 
 
 def build() -> Path:
