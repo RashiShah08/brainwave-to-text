@@ -499,7 +499,7 @@ def permutation_test(
                 scores = [float(v) for v in saved.get("scores", [])]
                 log.info("resuming permutation test from %d saved score(s)",
                          len(scores))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning("ignoring unreadable permutation checkpoint (%s)", exc)
 
     # Replay the generator so a resumed run continues the same random sequence
