@@ -52,6 +52,10 @@ filterwarnings = ["ignore::DeprecationWarning"]
 line-length = 88
 target-version = "py311"
 src = ["src", "tests"]
+# v1 is kept verbatim as a reference for what changed and why; reformatting it
+# would destroy that. CI lints `src tests`, and this keeps a bare `ruff check`
+# in agreement with it.
+exclude = ["legacy"]
 
 [tool.ruff.lint]
 select = [

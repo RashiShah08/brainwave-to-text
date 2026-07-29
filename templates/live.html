@@ -5,28 +5,24 @@
 <div class="hero">
   <h1 class="hero-title">Live cortical decoder</h1>
   <p class="lede">
-    Every sphere is a real electrode at its true montage coordinate. Its glow is
-    live mu/beta power from the recording. When a decision commits, the
-    hemisphere that <em>should</em> respond lights up &mdash; motor imagery is
+    You are inside the montage. Every node around you is a real electrode at its
+    true coordinate; its glow is live mu/beta power from the recording, and the
+    pulses are signal travelling between neighbours. When a decision commits,
+    the hemisphere that <em>should</em> respond flares &mdash; motor imagery is
     contralateral, so imagining your right hand fires the left cortex.
   </p>
 </div>
 
-</div>
 <div class="stage-wrap">
-  <div id="stage" class="stage3d"></div>
-  <div class="stage-overlay">
-    <div class="ov-top">
-      <span class="ov-chip" id="ov-status">idle</span>
-      <span class="ov-chip ov-quiet" id="ov-time">0.0s</span>
-    </div>
-    <div class="ov-text" id="ov-text"></div>
-    <div class="ov-bottom">
-      <span class="ov-hint">drag to rotate &middot; scroll to zoom</span>
-    </div>
+  <div class="ov-top">
+    <span class="ov-chip" id="ov-status">idle</span>
+    <span class="ov-chip ov-quiet" id="ov-time">0.0s</span>
+  </div>
+  <div class="ov-text" id="ov-text"></div>
+  <div class="ov-bottom">
+    <span class="ov-hint">drag to look around &middot; scroll to fly through</span>
   </div>
 </div>
-<div class="wrap">
 
 <div class="card">
   <h2>Source</h2>
@@ -128,8 +124,6 @@
 </div>
 
 <script type="module">
-import { BrainScene } from "{{ url_for('static', filename='brain3d.js') }}";
-
 const els = {
   file: document.getElementById('file'),
   zone: document.getElementById('zone'),
@@ -151,17 +145,13 @@ let scene = null;
 let controller = null;
 let state = { decisions: 0, timeouts: 0, windowSum: 0, sinceDecision: 0 };
 
-// ---- build the 3D scene from the model's real electrode geometry ----------
-fetch('/api/v1/geometry')
-  .then((r) => r.json())
-  .then((geo) => {
-    scene = new BrainScene(document.getElementById('stage'), geo);
-    els.ovStatus.textContent = geo.n_channels + ' electrodes';
-  })
-  .catch(() => {
-    document.getElementById('stage').innerHTML =
-      '<div class="stage-fallback">3D view unavailable &mdash; WebGL may be disabled.</div>';
-  });
+// The environment is built once in base.html — every page lives inside it.
+window.neuralWorld.then((env) => {
+  scene = env;
+  els.ovStatus.textContent = env
+    ? document.documentElement.dataset.channels + ' electrodes'
+    : 'no webgl';
+});
 
 // ---- file picking ---------------------------------------------------------
 function showFile(f) {
@@ -350,5 +340,4 @@ els.form.addEventListener('submit', (ev) => {
   });
 });
 </script>
-</div>
 {% endblock %}

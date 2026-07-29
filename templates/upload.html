@@ -2,12 +2,21 @@
 {% block title %}Brainwave-to-Text &mdash; Decode a recording{% endblock %}
 
 {% block content %}
-<h1>Decode an EEG recording</h1>
-<p class="lede">
-  Upload a 64-channel EDF recording. Each cued trial is classified into one of
-  the model's imagined-movement classes, and the resulting command sequence is
-  fed to a spelling interface to produce text.
-</p>
+<div class="hero">
+  <h1>Decode an EEG recording</h1>
+  <p class="lede">
+    Upload a 64-channel EDF recording. Each cued trial is classified into one of
+    the model's imagined-movement classes, and the resulting command sequence is
+    fed to a spelling interface to produce text.
+  </p>
+</div>
+
+<!-- Open space so the environment is the first thing you read, not a card. -->
+<div class="stage-wrap stage-short">
+  <div class="ov-bottom">
+    <span class="ov-hint">drag to look around &middot; scroll to fly through</span>
+  </div>
+</div>
 
 <div class="card">
   <h2>Loaded model</h2>
