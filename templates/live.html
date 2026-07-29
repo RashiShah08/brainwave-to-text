@@ -223,14 +223,20 @@ function handle(msg) {
     return;
   }
 
-  // drive the 3D scene with real per-electrode power
+  // drive the plate with real per-electrode power and the live posterior
   if (scene && msg.band_power) scene.update(msg.band_power);
+  if (scene) scene.posterior(msg.posterior);
 
   Object.keys(msg.posterior).forEach((c) => {
+    const p = msg.posterior[c];
     const bar = els.bars.querySelector('[data-bar="' + CSS.escape(c) + '"]');
     const val = els.bars.querySelector('[data-for="' + CSS.escape(c) + '"]');
-    if (bar) bar.style.width = (msg.posterior[c] * 100).toFixed(1) + '%';
-    if (val) val.textContent = msg.posterior[c].toFixed(2);
+    // Saturation as well as extent: the wash darkens as the hypothesis gains.
+    if (bar) {
+      bar.style.width = (p * 100).toFixed(1) + '%';
+      bar.style.opacity = (0.28 + 0.72 * p).toFixed(3);
+    }
+    if (val) val.textContent = p.toFixed(2);
   });
 
   els.ovTime.textContent = msg.onset_seconds.toFixed(1) + 's';
@@ -243,7 +249,13 @@ function handle(msg) {
     else {
       state.decisions += 1;
       state.windowSum += msg.decision.n_windows;
-      if (scene) scene.flash(msg.decision.label);
+      if (scene) {
+        const steps = (msg.decision.speller && msg.decision.speller.steps) || [];
+        scene.commit({
+          label: msg.decision.label,
+          emitted: steps.length ? steps[steps.length - 1].emitted : null,
+        });
+      }
       els.ovText.textContent = msg.decision.label;
       els.ovText.classList.remove('pop');
       void els.ovText.offsetWidth;
@@ -260,6 +272,8 @@ function handle(msg) {
       if (!msg.speller.text) {
         els.text.innerHTML = '<span class="empty">Nothing committed yet.</span>';
       }
+      // The plate letters the same text, from the server's copy of it.
+      if (scene) scene.setText(msg.speller.text || '');
       els.candidates.innerHTML = '';
       (msg.speller.partial_candidates || []).slice(0, 16).forEach((c) => {
         const s = document.createElement('span');

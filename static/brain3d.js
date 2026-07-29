@@ -33,6 +33,13 @@
  */
 
 import * as THREE from './three.module.min.js';
+import { strokes } from './inkfont.js';
+
+const MAX_CHARS = 22;   // margin line length before the oldest letter is dropped
+const MAX_PINS = 9;     // annotations kept on the specimen at once
+const SEG_PER_GLYPH = 18;
+// Sized so a full margin line spans well inside the frustum at its held depth.
+const GLYPH_SIZE = 0.085;
 
 const INK = new THREE.Color('#2a2018');      // iron gall, warm near-black
 const SEPIA = new THREE.Color('#6d5333');    // faded ink, secondary structure
@@ -207,6 +214,14 @@ export class NeuralEnvironment {
     this.flashWas = 0;
     this.flashSide = null;
 
+    // Posterior wash, per hemisphere region, and the lettering the plate is
+    // currently carrying.
+    this.wash = { left_motor: 0, right_motor: 0, midline_motor: 0 };
+    this.washEased = { left_motor: 0, right_motor: 0, midline_motor: 0 };
+    this.text = [];
+    this.glyphs = [];
+    this.pins = [];
+
     this.scroll = 0;
     this.scrollEased = 0;
     this.yaw = -0.55;
@@ -233,6 +248,8 @@ export class NeuralEnvironment {
     this._somata();
     this._stipple();
     this._beads();
+    this._margin();
+    this._pinwork();
     this._spatter();
     this._input();
 
@@ -262,6 +279,8 @@ export class NeuralEnvironment {
   _scene() {
     this.scene = new THREE.Scene();
     this.cam = new THREE.PerspectiveCamera(46, 1, 0.1, 60);
+    // The margin is parented to the camera, so it must be in the graph.
+    this.scene.add(this.cam);
     this.rig = new THREE.Group();
     this.scene.add(this.rig);
     // Slight anatomical tilt, as a specimen is mounted.
@@ -787,6 +806,178 @@ export class NeuralEnvironment {
     this.rig.add(this.beads);
   }
 
+  /**
+   * The margin line the decoded text is written into.
+   *
+   * Buffers are preallocated to the worst case and the draw count is moved
+   * instead of reallocating, because a letter arrives roughly every second and
+   * rebuilding geometry that often would churn. It sits in world space below
+   * the specimen, in the plane the camera faces, so the lettering reads flat
+   * on the paper while the brain turns behind it.
+   */
+  _margin() {
+    const max = MAX_CHARS * SEG_PER_GLYPH;
+    const pos = new Float32Array(max * 6);
+    const col = new Float32Array(max * 6);
+    const ink = new Float32Array(max * 2);
+    this.marginAt = new Float32Array(max * 2);   // pen travel, 0..1 per glyph
+    for (let i = 0; i < max * 2; i++) {
+      col[i * 3] = INK.r; col[i * 3 + 1] = INK.g; col[i * 3 + 2] = INK.b;
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    g.setAttribute('aInk', new THREE.BufferAttribute(ink, 1));
+    g.setDrawRange(0, 0);
+    this.marginCount = 0;
+    this.margin = new THREE.LineSegments(g, this._strokeMaterial());
+    // Held in camera space: the specimen turns and the page scrolls, but the
+    // written line stays on the paper in front of the reader.
+    this.margin.position.set(0, -0.56, -2.0);
+    this.cam.add(this.margin);
+
+    // A ruled line to write on, as a plate has.
+    const rp = [];
+    const rc = [];
+    const ri = [];
+    const half = (MAX_CHARS * 0.86 * GLYPH_SIZE) / 2;
+    for (let s = 0; s < 60; s++) {
+      const x0 = -half + (s / 60) * half * 2;
+      const x1 = -half + ((s + 1) / 60) * half * 2;
+      rp.push(x0, -0.055, 0, x1, -0.055, 0);
+      for (let v = 0; v < 2; v++) {
+        rc.push(SEPIA.r, SEPIA.g, SEPIA.b);
+        ri.push(0.16 + 0.1 * Math.sin(s * 0.7));
+      }
+    }
+    this.rule = this._lines(rp, rc, ri);
+    this.rule.position.copy(this.margin.position);
+    this.cam.add(this.rule);
+  }
+
+  /**
+   * Rebuild the margin buffer from `this.text`. Called only when a letter is
+   * added or the oldest is dropped, so per-glyph draw progress is preserved
+   * across the rebuild rather than restarting every animation.
+   */
+  _layoutMargin() {
+    const g = this.margin.geometry;
+    const pos = g.attributes.position.array;
+    const size = GLYPH_SIZE;
+    let n = 0;
+
+    // Centre the line on the advance width actually used.
+    let width = 0;
+    for (const ch of this.text) width += strokes(ch).advance * size;
+    let x = -width / 2;
+
+    for (let gi = 0; gi < this.text.length; gi++) {
+      const { segments, advance } = strokes(this.text[gi]);
+      const glyph = this.glyphs[gi];
+      glyph.start = n;
+      for (const [x1, y1, x2, y2, at] of segments) {
+        if (n >= MAX_CHARS * SEG_PER_GLYPH) break;
+        pos[n * 6] = x + x1 * size;
+        pos[n * 6 + 1] = y1 * size;
+        pos[n * 6 + 2] = 0;
+        pos[n * 6 + 3] = x + x2 * size;
+        pos[n * 6 + 4] = y2 * size;
+        pos[n * 6 + 5] = 0;
+        this.marginAt[n * 2] = at;
+        this.marginAt[n * 2 + 1] = at;
+        n++;
+      }
+      glyph.count = n - glyph.start;
+      x += advance * size;
+    }
+    g.setDrawRange(0, n * 2);
+    g.attributes.position.needsUpdate = true;
+    this.marginCount = n;
+  }
+
+  /** Specimen pins: a leader off the cortex, a tick, and a lettered label. */
+  _pinwork() {
+    const max = MAX_PINS * (SEG_PER_GLYPH + 8);
+    const pos = new Float32Array(max * 6);
+    const col = new Float32Array(max * 6);
+    const ink = new Float32Array(max * 2);
+    this.pinOf = new Int32Array(max * 2);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    g.setAttribute('aInk', new THREE.BufferAttribute(ink, 1));
+    g.setDrawRange(0, 0);
+    this.pinCount = 0;
+    this.pinwork = new THREE.LineSegments(g, this._strokeMaterial());
+    this.rig.add(this.pinwork);
+  }
+
+  /** Rebuild pin geometry. Runs at most once per committed decision. */
+  _layoutPins() {
+    const g = this.pinwork.geometry;
+    const pos = g.attributes.position.array;
+    const col = g.attributes.color.array;
+    // Kept short: a lateral contact's normal points straight out of frame, so
+    // a long leader takes the label off the plate entirely.
+    const size = 0.070;
+    const LEADER = 0.15;
+    const TICK = 0.05;
+    let n = 0;
+
+    const right = new THREE.Vector3();
+    const up = new THREE.Vector3();
+    const worldUp = new THREE.Vector3(0, 1, 0);
+    const a = new THREE.Vector3();
+    const b = new THREE.Vector3();
+    const c = new THREE.Vector3();
+
+    const push = (p1, p2, pinIndex, tint) => {
+      if (n >= this.pinOf.length / 2) return;
+      pos[n * 6] = p1.x; pos[n * 6 + 1] = p1.y; pos[n * 6 + 2] = p1.z;
+      pos[n * 6 + 3] = p2.x; pos[n * 6 + 4] = p2.y; pos[n * 6 + 5] = p2.z;
+      for (let v = 0; v < 2; v++) {
+        const k = (n * 2 + v) * 3;
+        col[k] = tint.r; col[k + 1] = tint.g; col[k + 2] = tint.b;
+        this.pinOf[n * 2 + v] = pinIndex;
+      }
+      n++;
+    };
+
+    this.pins.forEach((pin, pi) => {
+      const site = this.site[pin.site];
+      const nrm = this.normal[pin.site];
+      // Leader: straight out along the surface normal, then a short tick.
+      a.copy(site);
+      b.copy(site).addScaledVector(nrm, LEADER);
+      c.copy(b).addScaledVector(nrm, TICK);
+      push(a, b, pi, OXBLOOD);
+      push(b, c, pi, OXBLOOD);
+
+      right.crossVectors(worldUp, nrm);
+      if (right.lengthSq() < 1e-6) right.set(1, 0, 0);
+      right.normalize();
+      up.crossVectors(nrm, right).normalize();
+
+      const { segments } = strokes(pin.label);
+      const originX = 0.028;
+      const originY = -0.03;
+      const p1 = new THREE.Vector3();
+      const p2 = new THREE.Vector3();
+      for (const [x1, y1, x2, y2] of segments) {
+        p1.copy(c).addScaledVector(right, (originX + x1 * size))
+          .addScaledVector(up, (originY + y1 * size));
+        p2.copy(c).addScaledVector(right, (originX + x2 * size))
+          .addScaledVector(up, (originY + y2 * size));
+        push(p1, p2, pi, INK);
+      }
+    });
+
+    g.setDrawRange(0, n * 2);
+    g.attributes.position.needsUpdate = true;
+    g.attributes.color.needsUpdate = true;
+    this.pinCount = n;
+  }
+
   /** Sparse spatter, the way ink flecks a plate. Pure texture, no meaning. */
   _spatter() {
     const n = this.soft ? 120 : 300;
@@ -858,18 +1049,95 @@ export class NeuralEnvironment {
     for (let i = 0; i < this.n; i++) this.target[i] = bandPower[i];
   }
 
-  flash(label) {
+  /** Motor imagery is contralateral: a right-hand class answers on the left. */
+  static region(label) {
     const l = (label || '').toLowerCase();
-    if (l.includes('right')) this.flashSide = 'left_motor';
-    else if (l.includes('left')) this.flashSide = 'right_motor';
-    else this.flashSide = 'midline_motor';
+    if (l.includes('right')) return 'left_motor';
+    if (l.includes('left')) return 'right_motor';
+    return 'midline_motor';
+  }
+
+  flash(label) {
+    this.flashSide = NeuralEnvironment.region(label);
     this.flashAmount = 1;
+  }
+
+  /**
+   * Live posterior over classes, as a wash. Each class inks the hemisphere
+   * that would produce it, so the two hypotheses visibly compete across the
+   * plate instead of racing along a bar.
+   */
+  posterior(map) {
+    if (!map) return;
+    for (const k of Object.keys(this.wash)) this.wash[k] = 0;
+    for (const [label, p] of Object.entries(map)) {
+      const r = NeuralEnvironment.region(label);
+      this.wash[r] = Math.max(this.wash[r], p);
+    }
+  }
+
+  /**
+   * A committed decision: flare the responding hemisphere and pin the site
+   * that carried it, labelled with whatever the speller emitted.
+   */
+  commit(decision) {
+    if (!decision) return;
+    this.flash(decision.label);
+    const region = this.flashSide;
+
+    // Pin the most active contact in the responding region — the one the
+    // decision actually rested on.
+    let site = -1;
+    let best = -Infinity;
+    for (let i = 0; i < this.n; i++) {
+      if (this.electrodes[i].region !== region) continue;
+      if (this.vis[i] > best) { best = this.vis[i]; site = i; }
+    }
+    if (site < 0) return;
+
+    const label = (decision.emitted && decision.emitted !== '—')
+      ? decision.emitted
+      : (decision.label || '?').charAt(0);
+    this.pins.push({ site, label, age: 0 });
+    if (this.pins.length > MAX_PINS) this.pins.shift();
+    this._layoutPins();
+  }
+
+  /**
+   * Sync the margin lettering to the spelled text. New characters are inked
+   * stroke by stroke; the rest are left alone. Driven from the server's text
+   * rather than from emissions, so the plate can never drift out of step with
+   * what was actually decoded.
+   */
+  setText(str) {
+    const next = Array.from(str || '');
+    const same = next.length >= this.text.length
+      && this.text.every((c, i) => c === next[i]);
+
+    if (!same) {
+      this.text = next.slice(-MAX_CHARS);
+      this.glyphs = this.text.map(() => ({ progress: 1, start: 0, count: 0 }));
+      this._layoutMargin();
+      return;
+    }
+    for (let i = this.text.length; i < next.length; i++) {
+      this.text.push(next[i]);
+      this.glyphs.push({ progress: 0, start: 0, count: 0 });
+      while (this.text.length > MAX_CHARS) { this.text.shift(); this.glyphs.shift(); }
+    }
+    this._layoutMargin();
   }
 
   reset() {
     this.power.fill(0.42);
     this.target.fill(0.42);
     this.flashAmount = 0;
+    this.text = [];
+    this.glyphs = [];
+    this.pins = [];
+    for (const k of Object.keys(this.wash)) this.wash[k] = 0;
+    this._layoutMargin();
+    this._layoutPins();
   }
 
   // -- loop -----------------------------------------------------------------
@@ -923,14 +1191,24 @@ export class NeuralEnvironment {
       sink[i] = 0.42 + v * 0.58;
     }
 
+    // -- posterior wash -----------------------------------------------------
+    for (const k of Object.keys(this.wash)) {
+      this.washEased[k] += (this.wash[k] - this.washEased[k]) * (1 - Math.exp(-dt * 3.5));
+    }
+
     // -- cortical hatching --------------------------------------------------
     const hink = this.hatch.geometry.attributes.aInk.array;
     const hcol = this.hatch.geometry.attributes.color.array;
     for (let k = 0; k < this.nHatch; k++) {
       const owner = this.hatchOwner[k];
-      const lit = this.flashAmount > 0
-        && this.electrodes[owner].region === this.flashSide ? this.flashAmount : 0;
-      const w = this.hatchBase[k] * (0.55 + this.vis[owner] * 0.95) + lit * 0.30;
+      const region = this.electrodes[owner].region;
+      const lit = this.flashAmount > 0 && region === this.flashSide
+        ? this.flashAmount : 0;
+      // The competing hypotheses saturate their own hemisphere. Subtracting a
+      // half keeps an even 50/50 split neutral, so the wash reads as a lead
+      // rather than as overall brightness.
+      const bias = Math.max(0, (this.washEased[region] || 0) - 0.5) * 0.62;
+      const w = this.hatchBase[k] * (0.55 + this.vis[owner] * 0.95 + bias) + lit * 0.30;
       hink[k * 2] = w;
       hink[k * 2 + 1] = w;
       if (recolour) {
@@ -1016,6 +1294,38 @@ export class NeuralEnvironment {
       this._col.copy(INK).lerp(OXBLOOD, 0.35 + energy * 0.5);
       bcol[j] = this._col.r; bcol[j + 1] = this._col.g; bcol[j + 2] = this._col.b;
       bink[k] = Math.sin(u * Math.PI) * (0.35 + energy * 0.65);
+    }
+
+    // -- margin lettering ---------------------------------------------------
+    // Roughly two characters a second of pen travel, so a letter is visibly
+    // written rather than switched on.
+    const mink = this.margin.geometry.attributes.aInk.array;
+    for (let gi = 0; gi < this.glyphs.length; gi++) {
+      const glyph = this.glyphs[gi];
+      if (glyph.progress < 1) glyph.progress = Math.min(1, glyph.progress + dt * 2.2);
+      for (let k = glyph.start; k < glyph.start + glyph.count; k++) {
+        const at = this.marginAt[k * 2];
+        const on = glyph.progress >= at ? 1
+          : Math.max(0, 1 - (at - glyph.progress) * 14);
+        mink[k * 2] = on;
+        mink[k * 2 + 1] = on;
+      }
+    }
+    this.margin.geometry.attributes.aInk.needsUpdate = true;
+
+    // -- pins ---------------------------------------------------------------
+    // Newest annotation is full strength; older ones fade back like earlier
+    // marginalia, so the plate accumulates a history instead of a stack.
+    if (this.pinCount) {
+      const pkin = this.pinwork.geometry.attributes.aInk.array;
+      for (const pin of this.pins) pin.age += dt;
+      for (let k = 0; k < this.pinCount * 2; k++) {
+        const pin = this.pins[this.pinOf[k]];
+        const settle = pin ? Math.min(1, pin.age * 3.5) : 0;
+        const fade = pin ? Math.max(0.34, 1 - pin.age * 0.045) : 0;
+        pkin[k] = 0.8 * settle * fade;
+      }
+      this.pinwork.geometry.attributes.aInk.needsUpdate = true;
     }
 
     const dirty = [
