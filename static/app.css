@@ -273,14 +273,28 @@ select, .drop {
 }
 select:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
 
+/* A <label> is inline by default, so its border wraps each line box instead of
+   forming one. Without this the dashed frame cuts straight through the text. */
 .drop {
-  background-image: none; padding: 12px 10px; cursor: pointer;
-  border-style: dashed; text-align: left; line-height: 1.5;
+  display: block;
+  background-image: none; padding: 11px 10px 12px; cursor: pointer;
+  border-style: dashed; text-align: left; line-height: 1.45;
+  font-family: var(--sans); font-size: 12px; color: var(--fg-2);
+  transition: border-color .12s, background .12s;
 }
-.drop:hover, .drop.hot { border-color: var(--accent); color: var(--fg); }
-.drop b { color: var(--fg); font-weight: 500; }
-.drop em { display: block; font-style: normal; color: var(--fg-3); font-size: 10px; }
-.drop .file { display: block; margin-top: 5px; color: var(--accent); word-break: break-all; }
+.drop:hover, .drop.hot { border-color: var(--accent); background: var(--panel-2); }
+.drop b { display: block; color: var(--fg); font-weight: 500; font-size: 12.5px; }
+.drop em {
+  display: block; font-style: normal; color: var(--fg-3);
+  font-family: var(--mono); font-size: 10px; margin-top: 2px;
+}
+.drop .file {
+  display: block; margin-top: 7px; padding-top: 6px;
+  border-top: 1px solid var(--line);
+  font-family: var(--mono); font-size: 10.5px; color: var(--accent);
+  word-break: break-all;
+}
+.drop .file:empty { display: none; }
 input[type="file"] { display: none; }
 
 .btns { display: grid; grid-template-columns: 1fr auto; gap: 6px; }
@@ -423,6 +437,14 @@ body.doc .mono { font-family: var(--mono); }
 
 @media (max-width: 1240px) {
   .rig { grid-template-columns: 240px minmax(0, 1fr) 290px; }
+}
+/* The acquisition strip drops its least load-bearing readings before it will
+   push anything off the window. Task, elapsed time and state always stay. */
+@media (max-width: 1080px) {
+  .strip-item[data-rank="2"] { display: none; }
+}
+@media (max-width: 900px) {
+  .strip-item[data-rank="1"] { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before { animation: none !important; transition: none !important; }

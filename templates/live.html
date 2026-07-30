@@ -9,10 +9,10 @@
   <!-- Acquisition metadata, the way a recorder states its own settings. -->
   <div class="strip">
     <div class="strip-item"><span class="strip-key">Task</span><span class="strip-val">{{ model.task }}</span></div>
-    <div class="strip-item"><span class="strip-key">Method</span><span class="strip-val">{{ model.pipeline }}</span></div>
-    <div class="strip-item"><span class="strip-key">Channels</span><span class="strip-val">{{ model.n_channels }}</span></div>
-    <div class="strip-item"><span class="strip-key">Rate</span><span class="strip-val">{{ '%g' % model.sfreq }} Hz</span></div>
-    <div class="strip-item"><span class="strip-key">Within-subj</span><span class="strip-val">
+    <div class="strip-item" data-rank="1"><span class="strip-key">Method</span><span class="strip-val">{{ model.pipeline }}</span></div>
+    <div class="strip-item" data-rank="2"><span class="strip-key">Channels</span><span class="strip-val">{{ model.n_channels }}</span></div>
+    <div class="strip-item" data-rank="2"><span class="strip-key">Rate</span><span class="strip-val">{{ '%g' % model.sfreq }} Hz</span></div>
+    <div class="strip-item" data-rank="1"><span class="strip-key">Within-subj</span><span class="strip-val">
       {% if performance and performance.within_subject_accuracy is not none %}
         {{ '%.1f' % (performance.within_subject_accuracy * 100) }}%
       {% else %}&mdash;{% endif %}</span></div>
@@ -215,17 +215,19 @@ const scope = (() => {
   let filled = 0;
   let keep = 960;
   let sfreq = 160;
-  let scale = [];                     // per-channel µV at full deflection
+  // One gain for every channel, as an EEG viewer has a single µV/div setting.
+  // Scaling each lane to its own peak instead makes every trace fill its lane
+  // identically, which hides the real amplitude differences between sites and
+  // is why nine distinct channels can look like one repeated nine times.
+  let gain = 60;
 
   function init(trace) {
     names = trace.channels;
     sfreq = trace.sfreq || 160;
     keep = Math.max(64, Math.round(sfreq * SECONDS));
     ring = names.map(() => new Float32Array(keep));
-    scale = names.map(() => 40);
+    gain = 60;
     head = 0; filled = 0;
-    document.getElementById('scope-note').textContent =
-      names.length + ' ch · ' + sfreq.toFixed(0) + ' Hz · ' + SECONDS + ' s';
     resize();
   }
 
@@ -233,19 +235,20 @@ const scope = (() => {
   function push(block) {
     if (!ring.length || !block) return;
     const n = block[0].length;
+    let peak = 0;
     for (let r = 0; r < ring.length && r < block.length; r++) {
       const row = block[r];
       const buf = ring[r];
-      let peak = 0;
       for (let k = 0; k < n; k++) {
         buf[(head + k) % keep] = row[k];
         const a = Math.abs(row[k]);
         if (a > peak) peak = a;
       }
-      // Track the deflection slowly, so the gain does not jump about between
-      // steps the way a per-block normalisation would.
-      scale[r] = Math.max(8, scale[r] * 0.92 + peak * 1.25 * 0.08);
     }
+    // One follower over every channel, moved slowly: per-block normalisation
+    // would make the whole block jump on each step, which is what turns real
+    // signal into something that looks synthetic.
+    gain = Math.max(20, gain * 0.94 + peak * 1.15 * 0.06);
     head = (head + n) % keep;
     filled = Math.min(keep, filled + n);
     draw();
@@ -297,7 +300,7 @@ const scope = (() => {
       const span = w - gutter;
       const mid = y0 + band / 2;
       const amp = (band - 6) / 2;
-      const gain = amp / scale[r];
+      const px = amp / gain;              // pixels per microvolt, shared
       // One vertical pixel column per sample would be wasteful and illegible;
       // step so the sweep is drawn at roughly screen resolution.
       const stride = Math.max(1, Math.floor(keep / Math.max(1, span)));
@@ -306,17 +309,23 @@ const scope = (() => {
         // history leftward, so the newest sample must not drift.
         const idx = (head - filled + k + keep * 2) % keep;
         const x = gutter + span - (span * (filled - 1 - k)) / Math.max(1, keep - 1);
-        const y = Math.max(y0 + 2, Math.min(y0 + band - 2, mid - buf[idx] * gain));
+        const y = Math.max(y0 + 2, Math.min(y0 + band - 2, mid - buf[idx] * px));
         if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       }
       ctx.stroke();
     }
 
     ctx.strokeStyle = line;
+    ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(gutter + 0.5, 0);
     ctx.lineTo(gutter + 0.5, h);
     ctx.stroke();
+
+    // State the gain, since a trace without one is not a measurement.
+    document.getElementById('scope-note').textContent =
+      names.length + ' ch · ' + sfreq.toFixed(0) + ' Hz · '
+      + SECONDS + ' s · ±' + gain.toFixed(0) + ' µV';
   }
 
   addEventListener('resize', resize, { passive: true });
