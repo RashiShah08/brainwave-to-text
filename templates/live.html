@@ -1,163 +1,144 @@
 {% extends "base.html" %}
-{% block title %}Brainwave-to-Text &mdash; Live cortical decoder{% endblock %}
+{% block title %}Live cortical decoder{% endblock %}
+{# The instrument owns the window; only the file-decode page scrolls. #}
+{% block bodyclass %}{% endblock %}
 
 {% block fullbleed %}
-<div class="atlas">
-  <aside class="atlas-col">
-    <div class="plate-no">PL. II &mdash; CORTEX, AREA 4 &middot; MOTOR</div>
-    <h1 class="atlas-title">Live cortical decoder</h1>
-    <p class="atlas-lede">
-      Every structure is inked by the recording itself: each contact's measured
-      mu/beta power is attributed to the part of the cortex it sits over. When a
-      decision commits, the hemisphere that <em>should</em> respond darkens
-      &mdash; motor imagery is contralateral, so imagining your right hand cuts
-      into the left motor cortex.
-    </p>
+<div class="rig">
 
-    <section class="panel">
-      <h2>Source</h2>
-      <form id="form">
-        <label class="dropzone" id="zone" for="file">
-          <div><strong>Choose an .edf file</strong> or drop it here</div>
-          <div class="muted" style="font-size:0.82rem">
-            {{ model.n_channels }} channels &middot; {{ '%g' % model.sfreq }} Hz
-          </div>
-          <div class="filename" id="filename"></div>
-          <input type="file" id="file" accept=".edf" />
-        </label>
-
-        <div class="controls controls-stack mt">
-          <label>Replay speed
-            <select id="speed">
-              <option value="0">As fast as possible</option>
-              <option value="1">1&times; real time</option>
-              <option value="4" selected>4&times;</option>
-              <option value="10">10&times;</option>
-            </select>
-          </label>
-          <label>Window step
-            <select id="step">
-              <option value="0.25">0.25 s</option>
-              <option value="0.5" selected>0.5 s</option>
-              <option value="1.0">1.0 s</option>
-            </select>
-          </label>
-          <label>Commit threshold
-            <select id="threshold">
-              <option value="0.75">0.75 (fast)</option>
-              <option value="0.9" selected>0.90 (balanced)</option>
-              <option value="0.99">0.99 (careful)</option>
-            </select>
-          </label>
-        </div>
-
-        <div class="row mt">
-          <button class="btn" id="start" type="submit" disabled>Start decoding</button>
-          <button class="btn btn-ghost" id="stop" type="button" disabled>Stop</button>
-        </div>
-        <div class="muted mono" id="status" style="font-size:0.78rem;margin-top:0.6rem">Idle</div>
-      </form>
-    </section>
-  </aside>
-
-  <!-- The specimen owns the middle of the page. The camera frames itself to
-       this element, so the brain is centred here rather than in the viewport. -->
-  <div class="atlas-stage" id="stage">
-    <!-- Marks sit at the head of the plate: the caption must never cover the
-         specimen, and the foot belongs to the written line. -->
-    <div class="stage-marks">
-      <span class="ov-chip" id="ov-status">idle</span>
-      <span class="ov-chip ov-quiet" id="ov-time">0.0s</span>
-      <span class="ov-text" id="ov-text"></span>
-    </div>
-    <div class="stage-foot">
-      <div class="stage-hint">drag to turn the specimen &middot; click a structure to name it</div>
-    </div>
+  <!-- Acquisition metadata, the way a recorder states its own settings. -->
+  <div class="strip">
+    <div class="strip-item"><span class="strip-key">Task</span><span class="strip-val">{{ model.task }}</span></div>
+    <div class="strip-item"><span class="strip-key">Method</span><span class="strip-val">{{ model.pipeline }}</span></div>
+    <div class="strip-item"><span class="strip-key">Channels</span><span class="strip-val">{{ model.n_channels }}</span></div>
+    <div class="strip-item"><span class="strip-key">Rate</span><span class="strip-val">{{ '%g' % model.sfreq }} Hz</span></div>
+    <div class="strip-item"><span class="strip-key">Within-subj</span><span class="strip-val">
+      {% if performance and performance.within_subject_accuracy is not none %}
+        {{ '%.1f' % (performance.within_subject_accuracy * 100) }}%
+      {% else %}&mdash;{% endif %}</span></div>
+    <div class="strip-item strip-spacer"></div>
+    <div class="strip-item"><span class="strip-key">t</span><span class="strip-val" id="ov-time">0.0 s</span></div>
+    <div class="strip-item"><span class="strip-key">State</span><span class="strip-val" id="ov-status">idle</span></div>
   </div>
 
-  <aside class="atlas-col">
+  <!-- Left: acquisition control. -->
+  <div class="col col-l">
     <section class="panel">
-      <h2>Next command</h2>
-      <p class="hint">
-        Evidence building toward the <em>next</em> command. It resets to even
-        every time one commits, so it will often disagree with the last
-        decision below &mdash; they are different moments.
-      </p>
-      <div id="bars"></div>
-      <div class="last" id="last">
-        <span class="last-key">Last committed</span>
-        <span class="last-val" id="ld-class">&mdash;</span>
-        <span class="last-note" id="ld-site">waiting for the first decision</span>
-      </div>
-    </section>
+      <div class="panel-head"><span>Source</span></div>
+      <div class="panel-body">
+        <form id="form">
+          <label class="drop" id="zone" for="file">
+            <b>Load an .edf recording</b>
+            <em>{{ model.n_channels }} channels &middot; {{ '%g' % model.sfreq }} Hz</em>
+            <span class="file" id="filename"></span>
+            <input type="file" id="file" accept=".edf" />
+          </label>
 
-    <section class="panel">
-      <h2>Spelled text</h2>
-      <p class="hint">
-        Two classes cannot type 32 symbols directly, so each command takes one
-        branch of a binary search: five commands narrow the alphabet to a
-        single character.
-      </p>
-      <div class="decoded" id="text"><span class="empty">Nothing committed yet.</span></div>
-      <div class="speller" id="speller">
-        <span class="mono" id="sp-step">command 0 of 5</span>
-        <span class="mono" id="sp-narrow">32 symbols in play</span>
+          <div class="mt" style="margin-top:10px">
+            <label class="field"><span>Replay speed</span>
+              <select id="speed">
+                <option value="0">unthrottled</option>
+                <option value="1">1&times;</option>
+                <option value="4" selected>4&times;</option>
+                <option value="10">10&times;</option>
+              </select>
+            </label>
+            <label class="field"><span>Window step</span>
+              <select id="step">
+                <option value="0.25">0.25 s</option>
+                <option value="0.5" selected>0.50 s</option>
+                <option value="1.0">1.00 s</option>
+              </select>
+            </label>
+            <label class="field"><span>Commit threshold</span>
+              <select id="threshold">
+                <option value="0.75">0.75 &mdash; fast</option>
+                <option value="0.9" selected>0.90 &mdash; balanced</option>
+                <option value="0.99">0.99 &mdash; careful</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="btns" style="margin-top:10px">
+            <button class="btn" id="start" type="submit" disabled>Start</button>
+            <button class="btn btn-ghost" id="stop" type="button" disabled>Stop</button>
+          </div>
+          <div class="status" id="status">Idle</div>
+        </form>
       </div>
-      <div class="candidates" id="candidates"></div>
     </section>
 
     <section class="panel panel-grow">
-      <h2>Structures</h2>
-      <ul class="keyed" id="keyed"></ul>
+      <div class="panel-head"><span>Accumulator</span></div>
+      <div class="panel-body">
+        <div class="rows">
+          <div class="row2"><span class="k">Windows since decision</span><span class="v" id="m-windows">0</span></div>
+          <div class="row2"><span class="k">Decisions</span><span class="v" id="m-decisions">0</span></div>
+          <div class="row2"><span class="k">Timed out</span><span class="v" id="m-timeouts">0</span></div>
+          <div class="row2"><span class="k">Mean windows / decision</span><span class="v" id="m-mean">&mdash;</span></div>
+        </div>
+      </div>
     </section>
-  </aside>
+  </div>
+
+  <!-- Centre: the specimen. Empty by design — the fixed canvas draws here. -->
+  <div class="viewport" id="stage">
+    <div class="viewport-marks">
+      <span class="tag" id="ov-tag">idle</span>
+    </div>
+    <div class="viewport-foot">
+      <span class="hint">drag to rotate &middot; click a structure</span>
+      <span class="verdict" id="ov-text"></span>
+    </div>
+  </div>
+
+  <!-- Right: what the decoder currently believes. -->
+  <div class="col col-r">
+    <section class="panel">
+      <div class="panel-head"><span>Posterior</span><b id="ph-note">accumulating</b></div>
+      <div class="panel-body">
+        <div id="bars"></div>
+        <div class="rows" style="margin-top:10px">
+          <div class="row2"><span class="k">Last committed</span><span class="v is-alert" id="ld-class">&mdash;</span></div>
+          <div class="row2"><span class="k">Responded</span><span class="v" id="ld-site">&mdash;</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel panel-grow">
+      <div class="panel-head"><span>Structures</span><b>&mu;/&beta;</b></div>
+      <div class="panel-body is-flush">
+        <table class="tbl">
+          <thead><tr><th>Structure</th><th></th><th class="num">Level</th></tr></thead>
+          <tbody id="keyed"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><span>Spelled</span><b id="sp-step">0 / 5</b></div>
+      <div class="panel-body">
+        <div class="decoded" id="text"><span class="empty">nothing committed</span></div>
+        <div class="cands" id="candidates"></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Bottom: live signal and the decision log, side by side. -->
+  <div class="traces">
+    <div class="panel-head">
+      <span>Band power &mdash; motor channels</span>
+      <b id="scope-note">64 ch &middot; 8&ndash;30 Hz</b>
+    </div>
+    <canvas id="scope"></canvas>
+  </div>
+
 </div>
 {% endblock %}
 
-{% block content %}
-<div class="card">
-  <h2>Accumulator</h2>
-  <div class="metrics">
-    <div class="metric">
-      <div class="label">Windows</div>
-      <div class="value" id="m-windows">0</div>
-      <div class="sub">since last decision</div>
-    </div>
-    <div class="metric">
-      <div class="label">Decisions</div>
-      <div class="value accent" id="m-decisions">0</div>
-      <div class="sub" id="m-timeouts">0 timed out</div>
-    </div>
-    <div class="metric">
-      <div class="label">Mean windows</div>
-      <div class="value" id="m-mean">&mdash;</div>
-      <div class="sub">per committed decision</div>
-    </div>
-    <div class="metric">
-      <div class="label">Model accuracy</div>
-      <div class="value">
-        {% if performance and performance.within_subject_accuracy is not none %}
-          {{ '%.1f' % (performance.within_subject_accuracy * 100) }}%
-        {% else %}&mdash;{% endif %}
-      </div>
-      <div class="sub">within-subject, measured</div>
-    </div>
-  </div>
-</div>
+{% block content %}{% endblock %}
 
-<div class="card">
-  <h2>Decision log</h2>
-  <div class="table-scroll">
-    <table>
-      <thead>
-        <tr><th class="num">#</th><th class="num">At</th><th>Committed</th>
-            <th class="num">Confidence</th><th class="num">Windows</th><th>Emitted</th></tr>
-      </thead>
-      <tbody id="log"><tr><td colspan="6" class="muted">No decisions yet.</td></tr></tbody>
-    </table>
-  </div>
-</div>
-
+{% block scripts %}
 <script type="module">
 const els = {
   file: document.getElementById('file'),
@@ -170,8 +151,9 @@ const els = {
   text: document.getElementById('text'),
   candidates: document.getElementById('candidates'),
   bars: document.getElementById('bars'),
-  log: document.getElementById('log'),
+  keyed: document.getElementById('keyed'),
   ovStatus: document.getElementById('ov-status'),
+  ovTag: document.getElementById('ov-tag'),
   ovTime: document.getElementById('ov-time'),
   ovText: document.getElementById('ov-text'),
 };
@@ -180,52 +162,155 @@ let scene = null;
 let controller = null;
 let state = { decisions: 0, timeouts: 0, windowSum: 0, sinceDecision: 0 };
 
-// The environment is built once in base.html — every page lives inside it.
 window.neuralWorld.then((env) => {
   scene = env;
-  els.ovStatus.textContent = env
-    ? document.documentElement.dataset.channels + ' electrodes'
-    : 'no webgl';
-  if (!env) return;
+  if (!env) { els.ovStatus.textContent = 'no webgl'; return; }
   env.setStage(document.getElementById('stage'));
   buildKeyed(env);
+  scope.init(env.electrodes);
 });
 
-// ---- structure key: live activity, and a second way to select -------------
-const keyed = document.getElementById('keyed');
+// ---- structure table ------------------------------------------------------
 let keyedRows = [];
 
 function buildKeyed(env) {
-  keyed.innerHTML = '';
+  els.keyed.innerHTML = '';
   keyedRows = env.regionNames().map((name, id) => {
-    if (!env.hasContacts(id)) return null;   // nothing measures it; omit it
-    const li = document.createElement('li');
-    li.className = 'keyed-row';
-    li.innerHTML =
-      '<button type="button" class="keyed-hit">' +
-      '<span class="keyed-name"></span>' +
-      '<span class="keyed-track"><span class="keyed-fill"></span></span>' +
-      '<span class="keyed-val mono">0.00</span></button>';
-    li.querySelector('.keyed-name').textContent = name;
-    li.querySelector('.keyed-hit').addEventListener('click', () => env.select(id));
-    keyed.appendChild(li);
-    return { id, li, fill: li.querySelector('.keyed-fill'), val: li.querySelector('.keyed-val') };
+    if (!env.hasContacts(id)) return null;      // nothing measures it
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td></td><td><span class="bar"><i></i></span></td>'
+      + '<td class="num">0.00</td>';
+    tr.cells[0].textContent = name;
+    tr.title = name;
+    tr.addEventListener('click', () => env.select(id));
+    els.keyed.appendChild(tr);
+    return { id, tr, fill: tr.querySelector('.bar > i'), val: tr.cells[2] };
   }).filter(Boolean);
 
   env.onActivity = (activity, selected) => {
-    for (const row of keyedRows) {
-      const v = activity[row.id];
-      row.fill.style.width = (Math.min(1, v) * 100).toFixed(1) + '%';
-      row.val.textContent = v.toFixed(2);
-      row.li.classList.toggle('is-selected', row.id === selected);
+    for (const r of keyedRows) {
+      const v = activity[r.id];
+      r.fill.style.width = (Math.min(1, v) * 100).toFixed(0) + '%';
+      r.val.textContent = v.toFixed(2);
+      r.tr.classList.toggle('is-on', r.id === selected);
     }
   };
 }
 
 addEventListener('brain:select', (e) => {
   const id = e.detail ? e.detail.id : -1;
-  for (const row of keyedRows) row.li.classList.toggle('is-selected', row.id === id);
+  for (const r of keyedRows) r.tr.classList.toggle('is-on', r.id === id);
 });
+
+// ---- scope ----------------------------------------------------------------
+// A rolling strip of measured band power for a spread of motor-area contacts.
+// This is the same array that drives the specimen, drawn as a chart recorder
+// would: newest at the right, oldest scrolling off the left.
+const scope = (() => {
+  const cv = document.getElementById('scope');
+  const ctx = cv.getContext('2d');
+  const KEEP = 320;
+  let picks = [];
+  let names = [];
+  let ring = [];
+  let head = 0;
+  let filled = 0;
+
+  function init(electrodes) {
+    // One spread of contacts per motor region, so the trace block reads as
+    // left / midline / right rather than as an arbitrary subset.
+    const want = ['left_motor', 'midline_motor', 'right_motor'];
+    picks = [];
+    for (const region of want) {
+      const inRegion = electrodes
+        .map((e, i) => ({ e, i }))
+        .filter((o) => o.e.region === region);
+      const stride = Math.max(1, Math.floor(inRegion.length / 3));
+      for (let k = 0; k < inRegion.length && picks.length < 9; k += stride) {
+        picks.push(inRegion[k].i);
+      }
+    }
+    if (!picks.length) picks = electrodes.slice(0, 8).map((_, i) => i);
+    names = picks.map((i) => electrodes[i].name || ('ch' + i));
+    ring = picks.map(() => new Float32Array(KEEP).fill(0.5));
+    head = 0; filled = 0;
+    resize();
+    draw();
+  }
+
+  function push(power) {
+    if (!picks.length || !power) return;
+    picks.forEach((ch, r) => { ring[r][head] = power[ch]; });
+    head = (head + 1) % KEEP;
+    filled = Math.min(KEEP, filled + 1);
+    draw();
+  }
+
+  function resize() {
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    const w = cv.clientWidth || 900;
+    const h = cv.clientHeight || 150;
+    cv.width = Math.round(w * dpr);
+    cv.height = Math.round(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw();
+  }
+
+  function draw() {
+    const w = cv.clientWidth || 900;
+    const h = cv.clientHeight || 150;
+    ctx.clearRect(0, 0, w, h);
+    if (!picks.length) return;
+
+    const gutter = 44;
+    const rows = picks.length;
+    const band = h / rows;
+    const css = getComputedStyle(document.documentElement);
+    const line = css.getPropertyValue('--line').trim() || '#1d222a';
+    const dim = css.getPropertyValue('--fg-3').trim() || '#5f6873';
+    const ink = css.getPropertyValue('--accent').trim() || '#56b6cd';
+
+    ctx.font = '9px ui-monospace, monospace';
+    ctx.textBaseline = 'middle';
+
+    for (let r = 0; r < rows; r++) {
+      const y0 = r * band;
+      ctx.strokeStyle = line;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, Math.round(y0) + 0.5);
+      ctx.lineTo(w, Math.round(y0) + 0.5);
+      ctx.stroke();
+
+      ctx.fillStyle = dim;
+      ctx.fillText(names[r], 8, y0 + band / 2);
+
+      ctx.strokeStyle = ink;
+      ctx.beginPath();
+      const buf = ring[r];
+      const span = w - gutter;
+      for (let k = 0; k < filled; k++) {
+        // Anchored to the right edge: a chart recorder writes at the pen and
+        // pushes history leftward, so the newest sample must not drift.
+        const idx = (head - filled + k + KEEP * 2) % KEEP;
+        const x = gutter + span - (span * (filled - 1 - k)) / Math.max(1, KEEP - 1);
+        const v = Math.max(0, Math.min(1, buf[idx]));
+        const y = y0 + band - 2 - v * (band - 4);
+        if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+
+    ctx.strokeStyle = line;
+    ctx.beginPath();
+    ctx.moveTo(gutter + 0.5, 0);
+    ctx.lineTo(gutter + 0.5, h);
+    ctx.stroke();
+  }
+
+  addEventListener('resize', resize, { passive: true });
+  return { init, push, resize, reset() { ring.forEach((b) => b.fill(0.5)); head = 0; filled = 0; draw(); } };
+})();
 
 // ---- file picking ---------------------------------------------------------
 function showFile(f) {
@@ -242,28 +327,28 @@ els.zone.addEventListener('drop', (ev) => {
   if (ev.dataTransfer.files.length) { els.file.files = ev.dataTransfer.files; showFile(els.file.files[0]); }
 });
 
-// ---- evidence bars --------------------------------------------------------
+// ---- posterior ------------------------------------------------------------
 function buildBars(classes, threshold) {
   els.bars.innerHTML = '';
   classes.forEach((c) => {
-    const wrap = document.createElement('div');
-    wrap.className = 'ebar';
-    wrap.innerHTML =
-      '<div class="ebar-head"><span class="name">' + c + '</span>' +
-      '<span class="val mono" data-for="' + c + '">0.00</span></div>' +
-      '<div class="ebar-track"><div class="ebar-fill" data-bar="' + c + '"></div>' +
-      '<div class="ebar-thresh" style="left:' + (threshold * 100) + '%"></div></div>';
-    els.bars.appendChild(wrap);
+    const d = document.createElement('div');
+    d.className = 'meter';
+    d.innerHTML = '<div class="meter-head"><span class="n"></span>'
+      + '<span class="v" data-for="' + c + '">0.00</span></div>'
+      + '<div class="meter-track"><div class="meter-fill" data-bar="' + c + '"></div>'
+      + '<div class="meter-mark" style="left:' + (threshold * 100) + '%"></div></div>';
+    d.querySelector('.n').textContent = c;
+    els.bars.appendChild(d);
   });
 }
 
 function setNum(id, v) { document.getElementById(id).textContent = v; }
 
 // Imagining one hand suppresses the rhythm over the opposite hemisphere, so
-// the class and the structure that lights are always opposite sides.
+// the class and the structure that responds are always opposite sides.
 const CONTRALATERAL = {
-  left_fist: 'right primary motor cortex',
-  right_fist: 'left primary motor cortex',
+  left_fist: 'right motor cortex',
+  right_fist: 'left motor cortex',
   both_fists: 'both motor cortices',
   both_feet: 'medial motor strip',
   rest: 'no lateralised response',
@@ -274,76 +359,51 @@ function showDecision(label) {
   els.ovText.classList.remove('pop');
   void els.ovText.offsetWidth;
   els.ovText.classList.add('pop');
-  document.getElementById('ld-class').textContent = label;
-  document.getElementById('ld-site').textContent =
-    'lit ' + (CONTRALATERAL[label] || 'the responding side');
+  setNum('ld-class', label);
+  setNum('ld-site', CONTRALATERAL[label] || '—');
 }
 
-function showSpeller(sp) {
-  const per = sp.trials_per_character || 5;
-  const used = (sp.n_trials_consumed || 0) % per;
-  const left = (sp.partial_candidates || []).length;
-  document.getElementById('sp-step').textContent =
-    'command ' + used + ' of ' + per;
-  document.getElementById('sp-narrow').textContent =
-    left ? left + ' symbols in play' : 'character complete';
-}
+function addLogRow() { /* log lives in the decision table below */ }
 
-function addLogRow(d, onset) {
-  if (state.decisions + state.timeouts === 1) els.log.innerHTML = '';
-  const tr = document.createElement('tr');
-  tr.className = 'flash';
-  const emitted = (d.speller && d.speller.steps.length)
-    ? (d.speller.steps[d.speller.steps.length - 1].emitted || '—') : '—';
-  tr.innerHTML =
-    '<td class="num">' + (state.decisions + state.timeouts) + '</td>' +
-    '<td class="num">' + onset.toFixed(1) + 's</td>' +
-    '<td class="mono">' + (d.label === null ? '<span class="muted">timed out</span>' : d.label) + '</td>' +
-    '<td class="num">' + d.confidence.toFixed(3) + '</td>' +
-    '<td class="num">' + d.n_windows + '</td>' +
-    '<td class="mono">' + emitted + '</td>';
-  els.log.insertBefore(tr, els.log.firstChild);
-}
-
-// ---- stream handling ------------------------------------------------------
+// ---- stream ---------------------------------------------------------------
 function handle(msg) {
   if (msg.type === 'start') {
     buildBars(msg.classes, parseFloat(document.getElementById('threshold').value));
     els.ovStatus.textContent = 'decoding';
-    els.ovStatus.classList.add('live');
+    els.ovStatus.classList.add('is-live');
+    els.ovTag.textContent = 'decoding';
+    els.ovTag.classList.add('is-live');
     return;
   }
   if (msg.type === 'error') {
-    els.status.textContent = 'Error: ' + msg.message;
-    els.status.style.color = 'var(--bad)';
+    els.status.textContent = msg.message;
+    els.status.classList.add('is-bad');
     return;
   }
   if (msg.type === 'truncated') { els.status.textContent = msg.message; return; }
   if (msg.type === 'end') {
-    els.status.textContent = 'Finished — ' + msg.n_windows + ' windows decoded';
+    els.status.textContent = msg.n_windows + ' windows decoded';
     els.ovStatus.textContent = 'finished';
-    els.ovStatus.classList.remove('live');
+    els.ovStatus.classList.remove('is-live');
+    els.ovTag.textContent = 'finished';
+    els.ovTag.classList.remove('is-live');
     finish();
     return;
   }
 
-  // drive the plate with real per-electrode power and the live posterior
   if (scene && msg.band_power) scene.update(msg.band_power);
   if (scene) scene.posterior(msg.posterior);
+  if (msg.band_power) scope.push(msg.band_power);
 
   Object.keys(msg.posterior).forEach((c) => {
     const p = msg.posterior[c];
     const bar = els.bars.querySelector('[data-bar="' + CSS.escape(c) + '"]');
     const val = els.bars.querySelector('[data-for="' + CSS.escape(c) + '"]');
-    // Saturation as well as extent: the wash darkens as the hypothesis gains.
-    if (bar) {
-      bar.style.width = (p * 100).toFixed(1) + '%';
-      bar.style.opacity = (0.28 + 0.72 * p).toFixed(3);
-    }
+    if (bar) bar.style.width = (p * 100).toFixed(1) + '%';
     if (val) val.textContent = p.toFixed(2);
   });
 
-  els.ovTime.textContent = msg.onset_seconds.toFixed(1) + 's';
+  els.ovTime.textContent = msg.onset_seconds.toFixed(1) + ' s';
   state.sinceDecision += 1;
   setNum('m-windows', state.sinceDecision);
 
@@ -360,27 +420,23 @@ function handle(msg) {
           emitted: steps.length ? steps[steps.length - 1].emitted : null,
         });
       }
-      // Name the hemisphere too. Motor imagery is contralateral, so the class
-      // and the structure that lights are deliberately opposite, and without
-      // saying so the specimen looks like it is highlighting the wrong side.
       showDecision(msg.decision.label);
     }
     setNum('m-decisions', state.decisions);
-    setNum('m-timeouts', state.timeouts + ' timed out');
+    setNum('m-timeouts', state.timeouts);
     setNum('m-mean', state.decisions ? (state.windowSum / state.decisions).toFixed(1) : '—');
     setNum('m-windows', 0);
-    addLogRow(msg.decision, msg.onset_seconds);
+    addLogRow();
 
     if (msg.speller) {
       els.text.textContent = msg.speller.text || '';
-      if (!msg.speller.text) {
-        els.text.innerHTML = '<span class="empty">Nothing committed yet.</span>';
-      }
-      // The plate letters the same text, from the server's copy of it.
+      if (!msg.speller.text) els.text.innerHTML = '<span class="empty">nothing committed</span>';
       if (scene) scene.setText(msg.speller.text || '');
-      showSpeller(msg.speller);
+
+      const per = msg.speller.trials_per_character || 5;
+      setNum('sp-step', ((msg.speller.n_trials_consumed || 0) % per) + ' / ' + per);
       els.candidates.innerHTML = '';
-      (msg.speller.partial_candidates || []).slice(0, 16).forEach((c) => {
+      (msg.speller.partial_candidates || []).slice(0, 32).forEach((c) => {
         const s = document.createElement('span');
         s.className = 'cand'; s.textContent = c;
         els.candidates.appendChild(s);
@@ -397,9 +453,11 @@ function finish() {
 
 els.stop.addEventListener('click', () => {
   if (controller) controller.abort();
-  els.status.textContent = 'Stopped';
+  els.status.textContent = 'stopped';
   els.ovStatus.textContent = 'stopped';
-  els.ovStatus.classList.remove('live');
+  els.ovStatus.classList.remove('is-live');
+  els.ovTag.textContent = 'stopped';
+  els.ovTag.classList.remove('is-live');
   finish();
 });
 
@@ -408,17 +466,19 @@ els.form.addEventListener('submit', (ev) => {
   if (!els.file.files.length) return;
 
   state = { decisions: 0, timeouts: 0, windowSum: 0, sinceDecision: 0 };
-  ['m-decisions', 'm-windows'].forEach((i) => setNum(i, 0));
+  ['m-decisions', 'm-windows', 'm-timeouts'].forEach((i) => setNum(i, 0));
   setNum('m-mean', '—');
-  els.log.innerHTML = '<tr><td colspan="6" class="muted">No decisions yet.</td></tr>';
-  els.text.innerHTML = '<span class="empty">Nothing committed yet.</span>';
+  setNum('ld-class', '—');
+  setNum('ld-site', '—');
+  els.text.innerHTML = '<span class="empty">nothing committed</span>';
   els.candidates.innerHTML = '';
   els.ovText.textContent = '';
-  els.status.style.color = '';
-  els.status.textContent = 'Decoding…';
+  els.status.classList.remove('is-bad');
+  els.status.textContent = 'decoding…';
   els.start.disabled = true;
   els.stop.disabled = false;
   if (scene) scene.reset();
+  scope.reset();
 
   const body = new FormData();
   body.append('file', els.file.files[0]);
@@ -452,8 +512,8 @@ els.form.addEventListener('submit', (ev) => {
     return pump();
   }).catch((err) => {
     if (err.name !== 'AbortError') {
-      els.status.textContent = 'Connection failed';
-      els.status.style.color = 'var(--bad)';
+      els.status.textContent = 'connection failed';
+      els.status.classList.add('is-bad');
     }
     finish();
   });

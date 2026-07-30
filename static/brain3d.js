@@ -41,10 +41,12 @@ const MAX_PINS = 9;
 const SPECIMEN_HALF = 0.80;
 const SPECIMEN_CENTRE_Y = -0.13;
 
-const INK = new THREE.Color('#241c14');
-const SEPIA = new THREE.Color('#6d5333');
-const OXBLOOD = new THREE.Color('#8f3320');
-const VERDIGRIS = new THREE.Color('#3f6b57');
+const INK = new THREE.Color('#c3ccd6');
+const SEPIA = new THREE.Color('#5f6873');
+//: What the decoder is doing.
+const OXBLOOD = new THREE.Color('#d9614a');
+//: What the reader has selected.
+const VERDIGRIS = new THREE.Color('#56b6cd');
 
 /** Region ids. Order is load-bearing: it indexes the shader uniform arrays. */
 export const REGION = {
@@ -494,10 +496,12 @@ export class NeuralEnvironment {
         // nearly beige in the light, cooling toward grey-violet in shadow
         // rather than warming toward brown.
         uLit: { value: new THREE.Color('#dccdc2') },
-        uMid: { value: new THREE.Color('#b39c92') },
-        uShade: { value: new THREE.Color('#574a4c') },
+        uMid: { value: new THREE.Color('#a28b83') },
+        uShade: { value: new THREE.Color('#2e2b30') },
         uVessel: { value: new THREE.Color('#9c5a52') },
-        uPaper: { value: new THREE.Color('#ece3cf') },
+        // The ground the specimen sits on. On graphite the rim must fall away
+        // into the background, not glow against it.
+        uPaper: { value: new THREE.Color('#0a0c0f') },
       },
       vertexShader: TISSUE_VERT,
       fragmentShader: TISSUE_FRAG,

@@ -35,7 +35,7 @@
       });
   </script>
 </head>
-<body>
+<body class="{% block bodyclass %}doc{% endblock %}">
   <!-- The scene is the page. Every view is rendered inside it. -->
   <canvas id="world" aria-hidden="true"></canvas>
   <div class="vignette" aria-hidden="true"></div>
