@@ -89,9 +89,16 @@ _ATLAS = {
     "insula": INSULA,
 }
 
-MAGIC = b"CTX1"
-SPACING = "ico5"          # 10,242 vertices per hemisphere
+MAGIC = b"CTX2"
+#: ico6 is 40,962 vertices per hemisphere. ico5 was a quarter of that and it
+#: showed: decimation smooths sulci from tight, deep creases into rolling
+#: hills, which is most of why the surface read as moulded rather than real.
+SPACING = "ico6"
 TARGET_RADIUS = 0.92      # cortex sits just inside the unit scalp sphere
+#: Neighbours sampled per vertex when baking occlusion.
+AO_NEIGHBOURS = 48
+#: Falloff distance for that occlusion, in millimetres.
+AO_RADIUS_MM = 9.0
 
 
 def _annot_regions(subjects_dir: Path, hemi: str, vertno: np.ndarray) -> np.ndarray:
@@ -131,6 +138,49 @@ def _sulcal_depth(subjects_dir: Path, hemi: str, vertno: np.ndarray) -> np.ndarr
     sulc = read_morph_data(str(path))[vertno].astype(np.float32)
     # FreeSurfer convexity is positive in sulci. ~6 mm covers the usable range.
     return np.clip(sulc / 6.0, -2.0, 2.0)
+
+
+def _vertex_normals(rr: np.ndarray, tris: np.ndarray) -> np.ndarray:
+    """Area-weighted vertex normals, needed before occlusion can be baked."""
+    a, b, c = rr[tris[:, 0]], rr[tris[:, 1]], rr[tris[:, 2]]
+    face = np.cross(b - a, c - a)          # length is twice the area: the weight
+    out = np.zeros_like(rr)
+    for col in range(3):
+        np.add.at(out, tris[:, col], face)
+    norm = np.linalg.norm(out, axis=1, keepdims=True)
+    return out / np.maximum(norm, 1e-12)
+
+
+def _ambient_occlusion(rr: np.ndarray, normals: np.ndarray) -> np.ndarray:
+    """Bake how enclosed each vertex is by the rest of the surface.
+
+    Sulcal convexity says which way the surface bends; it does not say how much
+    of the sky a point can actually see. Two walls of a deep sulcus facing each
+    other are barely convex yet almost fully occluded, and shading from
+    convexity alone is exactly why the folds looked soft. This measures the real
+    thing: for each vertex, how much of its hemisphere neighbouring surface
+    blocks, weighted by distance.
+    """
+    from scipy.spatial import cKDTree
+
+    tree = cKDTree(rr)
+    # k+1 because the first hit is always the vertex itself.
+    _dist, idx = tree.query(rr, k=AO_NEIGHBOURS + 1, workers=-1)
+    idx = idx[:, 1:]
+
+    vecs = rr[idx] - rr[:, None, :]
+    dist = np.linalg.norm(vecs, axis=2)
+    dirs = vecs / np.maximum(dist, 1e-9)[..., None]
+
+    # Only neighbours above the tangent plane can occlude.
+    facing = np.clip(np.einsum("ijk,ik->ij", dirs, normals), 0.0, None)
+    weight = facing / (1.0 + (dist / AO_RADIUS_MM) ** 2)
+    ao = weight.sum(axis=1)
+
+    # Normalise against the bulk rather than the extreme, so one pathological
+    # vertex cannot flatten the whole range.
+    ao = ao / max(np.percentile(ao, 99.0), 1e-9)
+    return np.clip(ao, 0.0, 1.0).astype(np.float32)
 
 
 def build() -> Path:
@@ -185,12 +235,19 @@ def build() -> Path:
     xyz -= (xyz.max(axis=0) + xyz.min(axis=0)) / 2.0
     xyz *= TARGET_RADIUS / np.linalg.norm(xyz, axis=1).max()
 
+    print("baking ambient occlusion ...")
+    normals = _vertex_normals(xyz, tris)
+    ao = _ambient_occlusion(xyz, normals)
+    print(f"  occlusion: mean {ao.mean():.3f}, "
+          f"p95 {np.percentile(ao, 95):.3f}")
+
     out = Path(__file__).resolve().parents[1] / "static" / "cortex.bin"
     with out.open("wb") as fh:
         fh.write(MAGIC)
         fh.write(struct.pack("<II", len(xyz), len(tris)))
         fh.write(xyz.astype("<f4").tobytes())
         fh.write(depth.astype("<f4").tobytes())
+        fh.write(ao.astype("<f4").tobytes())
         fh.write(region.tobytes())
         fh.write(b"\x00" * (-len(region) % 4))          # keep indices aligned
         fh.write(tris.astype("<u4").tobytes())

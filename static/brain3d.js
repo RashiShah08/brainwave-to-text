@@ -135,7 +135,7 @@ export function decodeCortex(buffer) {
   const magic = String.fromCharCode(
     dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3),
   );
-  if (magic !== 'CTX1') throw new Error('cortex.bin: bad magic ' + magic);
+  if (magic !== 'CTX2') throw new Error('cortex.bin: bad magic ' + magic);
 
   const nV = dv.getUint32(4, true);
   const nT = dv.getUint32(8, true);
@@ -144,11 +144,13 @@ export function decodeCortex(buffer) {
   o += nV * 12;
   const depth = new Float32Array(buffer.slice(o, o + nV * 4));
   o += nV * 4;
+  const ao = new Float32Array(buffer.slice(o, o + nV * 4));
+  o += nV * 4;
   const region = new Uint8Array(buffer.slice(o, o + nV));
   o += nV + ((4 - (nV % 4)) % 4);          // indices are 4-byte aligned
   const index = new Uint32Array(buffer.slice(o, o + nT * 12));
 
-  return { position, depth, region, index, nV, nT };
+  return { position, depth, ao, region, index, nV, nT };
 }
 
 // ── shaders ───────────────────────────────────────────────────────────────
@@ -156,12 +158,14 @@ export function decodeCortex(buffer) {
 const TISSUE_VERT = `
   attribute float aRegion;
   attribute float aDepth;
+  attribute float aAo;
   uniform float uHi[${N_REGIONS}];
   uniform vec3  uHiCol[${N_REGIONS}];
   varying vec3 vN;
   varying vec3 vP;
   varying vec3 vObj;
   varying float vSulc;
+  varying float vAo;
   varying float vHi;
   varying vec3 vHiCol;
   void main() {
@@ -169,6 +173,7 @@ const TISSUE_VERT = `
     vHi = uHi[r];
     vHiCol = uHiCol[r];
     vSulc = aDepth;
+    vAo = aAo;
     vObj = position;
     vN = normalize(normalMatrix * normal);
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
@@ -204,6 +209,7 @@ const TISSUE_FRAG = `
   varying vec3 vP;
   varying vec3 vObj;
   varying float vSulc;
+  varying float vAo;
   varying float vHi;
   varying vec3 vHiCol;
 
@@ -234,6 +240,7 @@ const TISSUE_FRAG = `
     vec3 F = normalize(vec3(0.70, -0.30, 0.40));   // fill, low and opposite
 
     float depth = clamp(vSulc, 0.0, 1.0);
+    float ao = clamp(vAo, 0.0, 1.0);
 
     // Wrapped key: tissue scatters, so the terminator is soft rather than a
     // hard edge, and the shadow side keeps some colour.
@@ -263,16 +270,30 @@ const TISSUE_FRAG = `
     float vessel = smoothstep(0.945, 0.999, ridge) * (0.25 + shoulder) * 0.40;
     col = mix(col, uVessel, vessel);
 
-    // Sulcal occlusion, straight from the measured convexity. This is what
-    // makes the convolutions read.
-    col *= 1.0 - depth * 0.62;
+    // Real occlusion, baked from the mesh: how much of its own hemisphere each
+    // point actually has blocked. Convexity alone -- which is all this used to
+    // have -- cannot see that the two facing walls of a deep sulcus are nearly
+    // flat and yet almost fully enclosed, so the folds came out soft.
+    col *= mix(1.0, 0.26, ao);
+    col *= 1.0 - depth * 0.14;
 
-    // A damp sheen on the crowns only — a fixed specimen is wet, not glossy.
-    float spec = pow(max(dot(reflect(-K, N), V), 0.0), 34.0);
-    col += vec3(1.0) * spec * 0.11 * (1.0 - depth);
+    // Wet. The pia is a damp membrane, so it carries a tight bright highlight
+    // over a broader sheen — and that gloss, more than any amount of colour
+    // tuning, is what separates tissue from moulded plastic. It is killed off
+    // inside the folds, where light cannot reach to reflect.
+    vec3 H = normalize(K + V);
+    float ndh = max(dot(N, H), 0.0);
+    // Damp, not lacquered: a real specimen scatters most of what it reflects,
+    // so the tight lobe stays modest and the broad one carries the sheen.
+    float gloss = pow(ndh, 78.0) * 0.24 + pow(ndh, 16.0) * 0.11;
+    col += vec3(1.0, 0.985, 0.965) * gloss * (1.0 - ao * 0.88);
+
+    // Light bleeding through thin tissue at grazing angles.
+    float sss = pow(1.0 - max(dot(N, V), 0.0), 2.2) * (1.0 - ao);
+    col += vec3(0.16, 0.075, 0.075) * sss * 0.55;
 
     float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0);
-    col = mix(col, uPaper * 0.92, rim * 0.34);
+    col = mix(col, uPaper * 0.92, rim * 0.22);
 
     col = mix(col, vHiCol, clamp(vHi, 0.0, 1.0) * 0.78);
     gl_FragColor = vec4(col, 1.0);
@@ -454,9 +475,9 @@ export class NeuralEnvironment {
         // Cortex is far paler than it is usually drawn: a pale greyish-pink,
         // nearly beige in the light, cooling toward grey-violet in shadow
         // rather than warming toward brown.
-        uLit: { value: new THREE.Color('#ddd4c9') },
-        uMid: { value: new THREE.Color('#b2a49c') },
-        uShade: { value: new THREE.Color('#585055') },
+        uLit: { value: new THREE.Color('#dccdc2') },
+        uMid: { value: new THREE.Color('#b39c92') },
+        uShade: { value: new THREE.Color('#574a4c') },
         uVessel: { value: new THREE.Color('#9c5a52') },
         uPaper: { value: new THREE.Color('#ece3cf') },
       },
@@ -529,6 +550,9 @@ export class NeuralEnvironment {
     g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
     g.setAttribute('aRegion', new THREE.BufferAttribute(reg, 1));
     g.setAttribute('aDepth', new THREE.BufferAttribute(dep, 1));
+    // Generated shells have no baked occlusion; their fold depth stands in for
+    // it, which is the approximation the real cortex no longer has to make.
+    g.setAttribute('aAo', new THREE.BufferAttribute(dep.slice(), 1));
     geo.dispose();
 
     const mesh = new THREE.Mesh(g, this.tissueMat);
@@ -547,6 +571,7 @@ export class NeuralEnvironment {
     g.setIndex(new THREE.BufferAttribute(cortex.index, 1));
     g.setAttribute('position', new THREE.BufferAttribute(cortex.position, 3));
     g.setAttribute('aDepth', new THREE.BufferAttribute(cortex.depth, 1));
+    g.setAttribute('aAo', new THREE.BufferAttribute(cortex.ao, 1));
     g.setAttribute('aRegion', new THREE.BufferAttribute(
       Float32Array.from(cortex.region), 1,
     ));

@@ -67,13 +67,13 @@ def test_module_parses(name: str) -> None:
 def test_cortex_mesh_header_matches_its_payload() -> None:
     """The baked mesh must describe itself, or the loader reads past its end."""
     blob = (STATIC / "cortex.bin").read_bytes()
-    assert blob[:4] == b"CTX1", "cortex.bin is missing its magic"
+    assert blob[:4] == b"CTX2", "cortex.bin is missing its magic"
 
     n_verts, n_tris = struct.unpack_from("<II", blob, 4)
     assert n_verts > 0 and n_tris > 0
 
-    # header + positions + depth + region (padded to 4) + indices
-    expected = 12 + n_verts * 12 + n_verts * 4
+    # header + positions + depth + occlusion + region (padded to 4) + indices
+    expected = 12 + n_verts * 12 + n_verts * 4 + n_verts * 4
     expected += n_verts + (-n_verts % 4)
     expected += n_tris * 12
     assert len(blob) == expected, (
@@ -85,7 +85,7 @@ def test_cortex_regions_are_within_range() -> None:
     """Region ids index shader uniform arrays; out of range corrupts lighting."""
     blob = (STATIC / "cortex.bin").read_bytes()
     n_verts, _ = struct.unpack_from("<II", blob, 4)
-    start = 12 + n_verts * 12 + n_verts * 4
+    start = 12 + n_verts * 12 + n_verts * 4 + n_verts * 4
     regions = set(blob[start:start + n_verts])
     assert regions, "no region data"
     assert max(regions) < 11, f"region id out of range: {max(regions)}"
