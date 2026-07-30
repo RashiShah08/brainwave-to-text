@@ -25,9 +25,7 @@
   */
 
 import * as THREE from './three.module.min.js';
-import { strokes } from './inkfont.js';   // pin labels only
 
-const SEG_PER_GLYPH = 18;
 const MAX_PINS = 9;
 // The specimen spans about y -0.88 (brainstem) to +0.60 (vertex), so it is not
 // centred on the origin and must be framed about its own middle.
@@ -786,7 +784,7 @@ export class NeuralEnvironment {
   }
 
   _pinwork() {
-    const max = MAX_PINS * (SEG_PER_GLYPH + 8);
+    const max = MAX_PINS * 3;      // stalk plus a two-stroke cross
     const pos = new Float32Array(max * 6);
     const col = new Float32Array(max * 6);
     const ink = new Float32Array(max * 2);
@@ -803,13 +801,19 @@ export class NeuralEnvironment {
     this.rig.add(this.pinwork);
   }
 
+  /**
+   * Where each committed decision landed: a short stalk off the surface and a
+   * fiducial cross at the site. Deliberately unlettered — hand-drawn glyphs
+   * floating on the tissue belonged to an earlier, paper-bound design, and the
+   * decision's class, time and confidence read far better in the log than as
+   * two strokes on a curved surface.
+   */
   _layoutPins() {
     const g = this.pinwork.geometry;
     const pos = g.attributes.position.array;
     const col = g.attributes.color.array;
-    const size = 0.070;
-    const LEADER = 0.15;
-    const TICK = 0.05;
+    const LEADER = 0.13;
+    const ARM = 0.035;
     let n = 0;
 
     const right = new THREE.Vector3();
@@ -817,7 +821,6 @@ export class NeuralEnvironment {
     const worldUp = new THREE.Vector3(0, 1, 0);
     const a = new THREE.Vector3();
     const b = new THREE.Vector3();
-    const c = new THREE.Vector3();
     const p1 = new THREE.Vector3();
     const p2 = new THREE.Vector3();
 
@@ -838,22 +841,20 @@ export class NeuralEnvironment {
       const nrm = this.normal[pin.site];
       a.copy(site);
       b.copy(site).addScaledVector(nrm, LEADER);
-      c.copy(b).addScaledVector(nrm, TICK);
       push(a, b, pi, OXBLOOD);
-      push(b, c, pi, OXBLOOD);
 
       right.crossVectors(worldUp, nrm);
       if (right.lengthSq() < 1e-6) right.set(1, 0, 0);
       right.normalize();
       up.crossVectors(nrm, right).normalize();
 
-      for (const [x1, y1, x2, y2] of strokes(pin.label).segments) {
-        p1.copy(c).addScaledVector(right, 0.028 + x1 * size)
-          .addScaledVector(up, -0.03 + y1 * size);
-        p2.copy(c).addScaledVector(right, 0.028 + x2 * size)
-          .addScaledVector(up, -0.03 + y2 * size);
-        push(p1, p2, pi, INK);
-      }
+      // Cross at the head of the stalk, in the plane facing outward.
+      p1.copy(b).addScaledVector(right, -ARM);
+      p2.copy(b).addScaledVector(right, ARM);
+      push(p1, p2, pi, OXBLOOD);
+      p1.copy(b).addScaledVector(up, -ARM);
+      p2.copy(b).addScaledVector(up, ARM);
+      push(p1, p2, pi, OXBLOOD);
     });
 
     g.setDrawRange(0, n * 2);
@@ -1173,10 +1174,7 @@ export class NeuralEnvironment {
       if (this.vis[i] > best) { best = this.vis[i]; site = i; }
     }
     if (site < 0) return;
-    // The class, not a spelled character: the decoder emits one of two
-    // movements and nothing downstream of that belongs on the specimen.
-    const label = (decision.label || '?').charAt(0).toUpperCase();
-    this.pins.push({ site, label, age: 0 });
+    this.pins.push({ site, age: 0 });
     if (this.pins.length > MAX_PINS) this.pins.shift();
     this._layoutPins();
   }

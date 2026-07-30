@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 STATIC = Path(__file__).resolve().parents[1] / "static"
-MODULES = ["brain3d.js", "inkfont.js"]
+MODULES = ["brain3d.js"]
 
 
 def _shader_literals(source: str) -> list[str]:

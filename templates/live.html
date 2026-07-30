@@ -68,7 +68,7 @@
       </div>
     </section>
 
-    <section class="panel panel-grow">
+    <section class="panel">
       <div class="panel-head"><span>Accumulator</span></div>
       <div class="panel-body">
         <div class="rows">
@@ -77,6 +77,22 @@
           <div class="row2"><span class="k">Timed out</span><span class="v" id="m-timeouts">0</span></div>
           <div class="row2"><span class="k">Mean windows / decision</span><span class="v" id="m-mean">&mdash;</span></div>
         </div>
+      </div>
+    </section>
+
+    <!-- Where each pin on the specimen came from, with its numbers. -->
+    <section class="panel panel-grow">
+      <div class="panel-head"><span>Decisions</span><b>newest first</b></div>
+      <div class="panel-body is-flush">
+        <table class="log">
+          <thead>
+            <tr><th class="num">#</th><th class="num">At</th><th>Command</th>
+                <th class="num">Conf</th><th class="num">Win</th></tr>
+          </thead>
+          <tbody id="log">
+            <tr><td colspan="5" class="empty">none yet</td></tr>
+          </tbody>
+        </table>
       </div>
     </section>
   </div>
@@ -186,6 +202,7 @@ const els = {
   status: document.getElementById('status'),
   bars: document.getElementById('bars'),
   keyed: document.getElementById('keyed'),
+  log: document.getElementById('log'),
   ovStatus: document.getElementById('ov-status'),
   ovTag: document.getElementById('ov-tag'),
   ovTime: document.getElementById('ov-time'),
@@ -422,6 +439,27 @@ function showDecision(label) {
   pulse('command');
 }
 
+function addLogRow(d, at) {
+  if (state.decisions + state.timeouts === 1) els.log.innerHTML = '';
+  const tr = document.createElement('tr');
+  tr.className = 'new';
+  const cells = [
+    state.decisions + state.timeouts,
+    at.toFixed(1) + 's',
+    d.label === null ? 'timed out' : d.label,
+    d.confidence.toFixed(2),
+    d.n_windows,
+  ];
+  cells.forEach((v, i) => {
+    const td = document.createElement('td');
+    if (i !== 2) td.className = 'num';
+    td.textContent = v;
+    tr.appendChild(td);
+  });
+  els.log.insertBefore(tr, els.log.firstChild);
+  while (els.log.rows.length > 60) els.log.deleteRow(els.log.rows.length - 1);
+}
+
 // Light a stage of the signal path as data passes through it.
 const pathSteps = {};
 document.querySelectorAll('.path-step').forEach((li) => {
@@ -509,6 +547,7 @@ function handle(msg) {
     setNum('m-timeouts', state.timeouts);
     setNum('m-mean', state.decisions ? (state.windowSum / state.decisions).toFixed(1) : '—');
     setNum('m-windows', 0);
+    addLogRow(msg.decision, msg.onset_seconds);
   }
 }
 
@@ -538,6 +577,7 @@ els.form.addEventListener('submit', (ev) => {
   setNum('ld-class', '—');
   setNum('ld-site', '—');
   ['pv-classify', 'pv-accum', 'pv-command'].forEach((i) => setNum(i, '—'));
+  els.log.innerHTML = '<tr><td colspan="5" class="empty">none yet</td></tr>';
   els.ovText.textContent = '';
   els.status.classList.remove('is-bad');
   els.status.textContent = 'decoding…';

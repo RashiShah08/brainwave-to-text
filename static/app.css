@@ -375,6 +375,7 @@ input[type="file"] { display: none; }
 }
 .log td { padding: 3px 10px; color: var(--fg-2); border-bottom: 1px solid var(--line); }
 .log td.num, .log th.num { text-align: right; }
+.log td.empty { color: var(--fg-3); text-align: left; }
 .log tr.new td { animation: flashrow .5s ease; }
 @keyframes flashrow { from { background: rgba(217, 97, 74, 0.16); } }
 
