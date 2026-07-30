@@ -77,14 +77,33 @@
 
   <aside class="atlas-col">
     <section class="panel">
-      <h2>Spelled text</h2>
-      <div class="decoded" id="text"><span class="empty">Nothing committed yet.</span></div>
-      <div class="candidates mt" id="candidates"></div>
+      <h2>Next command</h2>
+      <p class="hint">
+        Evidence building toward the <em>next</em> command. It resets to even
+        every time one commits, so it will often disagree with the last
+        decision below &mdash; they are different moments.
+      </p>
+      <div id="bars"></div>
+      <div class="last" id="last">
+        <span class="last-key">Last committed</span>
+        <span class="last-val" id="ld-class">&mdash;</span>
+        <span class="last-note" id="ld-site">waiting for the first decision</span>
+      </div>
     </section>
 
     <section class="panel">
-      <h2>Evidence</h2>
-      <div id="bars"></div>
+      <h2>Spelled text</h2>
+      <p class="hint">
+        Two classes cannot type 32 symbols directly, so each command takes one
+        branch of a binary search: five commands narrow the alphabet to a
+        single character.
+      </p>
+      <div class="decoded" id="text"><span class="empty">Nothing committed yet.</span></div>
+      <div class="speller" id="speller">
+        <span class="mono" id="sp-step">command 0 of 5</span>
+        <span class="mono" id="sp-narrow">32 symbols in play</span>
+      </div>
+      <div class="candidates" id="candidates"></div>
     </section>
 
     <section class="panel panel-grow">
@@ -240,6 +259,36 @@ function buildBars(classes, threshold) {
 
 function setNum(id, v) { document.getElementById(id).textContent = v; }
 
+// Imagining one hand suppresses the rhythm over the opposite hemisphere, so
+// the class and the structure that lights are always opposite sides.
+const CONTRALATERAL = {
+  left_fist: 'right primary motor cortex',
+  right_fist: 'left primary motor cortex',
+  both_fists: 'both motor cortices',
+  both_feet: 'medial motor strip',
+  rest: 'no lateralised response',
+};
+
+function showDecision(label) {
+  els.ovText.textContent = label;
+  els.ovText.classList.remove('pop');
+  void els.ovText.offsetWidth;
+  els.ovText.classList.add('pop');
+  document.getElementById('ld-class').textContent = label;
+  document.getElementById('ld-site').textContent =
+    'lit ' + (CONTRALATERAL[label] || 'the responding side');
+}
+
+function showSpeller(sp) {
+  const per = sp.trials_per_character || 5;
+  const used = (sp.n_trials_consumed || 0) % per;
+  const left = (sp.partial_candidates || []).length;
+  document.getElementById('sp-step').textContent =
+    'command ' + used + ' of ' + per;
+  document.getElementById('sp-narrow').textContent =
+    left ? left + ' symbols in play' : 'character complete';
+}
+
 function addLogRow(d, onset) {
   if (state.decisions + state.timeouts === 1) els.log.innerHTML = '';
   const tr = document.createElement('tr');
@@ -311,10 +360,10 @@ function handle(msg) {
           emitted: steps.length ? steps[steps.length - 1].emitted : null,
         });
       }
-      els.ovText.textContent = msg.decision.label;
-      els.ovText.classList.remove('pop');
-      void els.ovText.offsetWidth;
-      els.ovText.classList.add('pop');
+      // Name the hemisphere too. Motor imagery is contralateral, so the class
+      // and the structure that lights are deliberately opposite, and without
+      // saying so the specimen looks like it is highlighting the wrong side.
+      showDecision(msg.decision.label);
     }
     setNum('m-decisions', state.decisions);
     setNum('m-timeouts', state.timeouts + ' timed out');
@@ -329,6 +378,7 @@ function handle(msg) {
       }
       // The plate letters the same text, from the server's copy of it.
       if (scene) scene.setText(msg.speller.text || '');
+      showSpeller(msg.speller);
       els.candidates.innerHTML = '';
       (msg.speller.partial_candidates || []).slice(0, 16).forEach((c) => {
         const s = document.createElement('span');
