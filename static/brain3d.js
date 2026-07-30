@@ -256,8 +256,11 @@ const TISSUE_FRAG = `
     // Pial vessels: ridged noise, so it forms branching lines rather than
     // blobs. They run over the crowns and disappear into the sulci, which is
     // where the real ones are hidden.
-    float ridge = 1.0 - abs(vnoise(vObj * 17.0) * 2.0 - 1.0);
-    float vessel = smoothstep(0.93, 0.999, ridge) * (1.0 - depth) * 0.38;
+    // Real pial vessels run *along* the sulci and thin out over the crowns, so
+    // this is weighted toward the shoulder of a fold rather than its top.
+    float ridge = 1.0 - abs(vnoise(vObj * 21.0) * 2.0 - 1.0);
+    float shoulder = smoothstep(0.05, 0.42, depth) * (1.0 - smoothstep(0.62, 0.95, depth));
+    float vessel = smoothstep(0.945, 0.999, ridge) * (0.25 + shoulder) * 0.40;
     col = mix(col, uVessel, vessel);
 
     // Sulcal occlusion, straight from the measured convexity. This is what
@@ -448,12 +451,13 @@ export class NeuralEnvironment {
         uHiCol: { value: this.uHiCol },
         // Muted anatomical tones, kept in the paper's family so the specimen
         // belongs to the plate rather than sitting on top of it.
-        // Fixed cortex is grey-pink, not tan. The earlier values leaned warm
-        // enough to read as gingerbread.
-        uLit: { value: new THREE.Color('#cfc1b8') },
-        uMid: { value: new THREE.Color('#9d8a81') },
-        uShade: { value: new THREE.Color('#4c403c') },
-        uVessel: { value: new THREE.Color('#7d5148') },
+        // Cortex is far paler than it is usually drawn: a pale greyish-pink,
+        // nearly beige in the light, cooling toward grey-violet in shadow
+        // rather than warming toward brown.
+        uLit: { value: new THREE.Color('#ddd4c9') },
+        uMid: { value: new THREE.Color('#b2a49c') },
+        uShade: { value: new THREE.Color('#585055') },
+        uVessel: { value: new THREE.Color('#9c5a52') },
         uPaper: { value: new THREE.Color('#ece3cf') },
       },
       vertexShader: TISSUE_VERT,
