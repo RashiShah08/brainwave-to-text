@@ -1,37 +1,51 @@
 {% extends "base.html" %}
-{% block title %}Brainwave-to-Text &mdash; Decode a recording{% endblock %}
+{% block title %}Decode a recording{% endblock %}
 
 {% block content %}
-<div class="hero" data-plate="PL. I &mdash; DECODING A RECORDING">
-  <h1>Decode an EEG recording</h1>
-  <p class="lede">
-    Upload a 64-channel EDF recording. Each cued trial is classified into one of
-    the model's imagined-movement classes, and the resulting command sequence is
-    fed to a spelling interface to produce text.
-  </p>
+<h1>Decode a recording</h1>
+<p class="lede">
+  Classifies each cued trial in a 64-channel EDF file as one of the model's
+  imagined-movement classes. The output is which movement was imagined &mdash;
+  one of {{ model.classes | length }} &mdash; and nothing more.
+</p>
+
+<div class="grid2">
+  <section class="card">
+    <h2>Recording</h2>
+    <form id="form" method="POST" action="{{ url_for('predict_form') }}"
+          enctype="multipart/form-data">
+      <label class="drop" id="zone" for="file">
+        <b>Choose an .edf file</b>
+        <em>{{ model.n_channels }} channels &middot; {{ '%g' % model.sfreq }} Hz &middot; max 64 MB</em>
+        <span class="file" id="filename"></span>
+        <input type="file" id="file" name="file" accept=".edf" required />
+      </label>
+      <div class="btns" style="margin-top:12px">
+        <button class="btn" id="submit" type="submit" disabled>Decode</button>
+        <span></span>
+      </div>
+      <div class="status" id="status">Processed in memory and deleted immediately.</div>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Input contract</h2>
+    <p class="note">
+      Enforced, not coerced. A recording that does not match is <b>rejected</b>
+      rather than silently resampled or reordered &mdash; either would
+      invalidate the spatial filters the model learned.
+    </p>
+    <dl class="spec">
+      <dt>Format</dt><dd>EDF / EDF+</dd>
+      <dt>Rate</dt><dd>{{ '%g' % model.sfreq }} Hz exactly</dd>
+      <dt>Channels</dt><dd>{{ model.n_channels }} &middot; 10&ndash;10, order normalised</dd>
+      <dt>Window</dt><dd>{{ model.tmin }}&ndash;{{ model.tmax }} s after cue &middot; {{ model.n_times }} samples</dd>
+      <dt>Cues</dt><dd>T1 / T2 preferred, else fixed windows</dd>
+    </dl>
+  </section>
 </div>
 
-<!-- Open space so the environment is the first thing you read, not a card. -->
-<div class="stage-wrap stage-short">
-  <div class="ov-bottom">
-    <span class="ov-hint">drag to turn the specimen &middot; click a structure to name it</span>
-  </div>
-</div>
-
-<div class="card">
-  <h2>Loaded model</h2>
-  <dl class="spec">
-    <dt>Task</dt><dd>{{ model.task }}</dd>
-    <dt>Description</dt><dd>{{ model.task_description }}</dd>
-    <dt>Classes</dt><dd>{{ model.classes | join(', ') }}</dd>
-    <dt>Method</dt><dd>{{ model.pipeline }}</dd>
-    <dt>Trained on</dt>
-    <dd>{{ model.n_train_trials }} trials from {{ model.train_subjects | length }} subjects</dd>
-    <dt>Trained</dt><dd>{{ model.created_utc }}</dd>
-  </dl>
-</div>
-
-<div class="card">
+<section class="card">
   <h2>Measured accuracy</h2>
   <div class="metrics">
     <div class="metric">
@@ -62,68 +76,35 @@
       <div class="sub">{{ model.classes | length }} classes</div>
     </div>
     <div class="metric">
-      <div class="label">Throughput</div>
-      <div class="value">{{ '%.1f' % performance.itr_bits_per_minute }}</div>
-      <div class="sub">bits/min &middot; {{ performance.trials_per_character }} trials/char</div>
+      <div class="label">Trained on</div>
+      <div class="value">{{ model.n_train_trials }}</div>
+      <div class="sub">trials &middot; {{ model.train_subjects | length }} subjects</div>
     </div>
   </div>
-  <div class="notice mt">
+  <p class="notice">
     <strong>Read the two numbers separately.</strong> Within-subject accuracy is
-    what a user gets after the system is calibrated on their own recordings, and
+    what a user gets once the system is calibrated on their own recordings, and
     it varies enormously between people &mdash; motor imagery simply does not
     work for a substantial minority. Cross-subject accuracy is what an
     uncalibrated model achieves on someone it has never seen.
-  </div>
-</div>
-
-<div class="card">
-  <h2>Upload</h2>
-  <form id="form" method="POST" action="{{ url_for('predict_form') }}"
-        enctype="multipart/form-data">
-    <label class="dropzone" id="zone" for="file">
-      <div><strong>Choose an .edf file</strong> or drop it here</div>
-      <div class="muted" style="font-size:0.85rem">
-        {{ model.n_channels }} channels &middot; {{ '%g' % model.sfreq }} Hz &middot; max 64 MB
-      </div>
-      <div class="filename" id="filename"></div>
-      <input type="file" id="file" name="file" accept=".edf" required />
-    </label>
-    <div class="row mt">
-      <button class="btn" id="submit" type="submit" disabled>Decode</button>
-      <span class="muted" style="font-size:0.85rem">
-        Files are processed in memory and deleted immediately.
-      </span>
-    </div>
-  </form>
-</div>
-
-<div class="card">
-  <h2>Input contract</h2>
-  <p class="muted" style="margin-top:0">
-    These are enforced, not coerced. A recording that does not match is rejected
-    rather than silently resampled or reordered, because either would invalidate
-    the spatial filters the model learned.
   </p>
-  <dl class="spec">
-    <dt>Format</dt><dd>EDF / EDF+</dd>
-    <dt>Sampling rate</dt><dd>{{ '%g' % model.sfreq }} Hz exactly</dd>
-    <dt>Channels</dt><dd>{{ model.n_channels }} (10&ndash;10 montage, order normalised)</dd>
-    <dt>Epoch window</dt>
-    <dd>{{ model.tmin }}&ndash;{{ model.tmax }} s after cue ({{ model.n_times }} samples)</dd>
-    <dt>Annotations</dt>
-    <dd>T1 / T2 cue markers preferred; otherwise fixed windows are used</dd>
-  </dl>
-</div>
+</section>
 
-<div class="overlay" id="overlay">
-  <div class="card row" style="gap:1rem">
-    <div class="spinner"></div>
-    <div>
-      <div><strong>Decoding&hellip;</strong></div>
-      <div class="muted" style="font-size:0.85rem">
-        Filtering, spatial projection, and classification.
-      </div>
-    </div>
+<section class="card">
+  <h2>Model</h2>
+  <dl class="spec">
+    <dt>Task</dt><dd>{{ model.task }}</dd>
+    <dt>Description</dt><dd>{{ model.task_description }}</dd>
+    <dt>Classes</dt><dd>{{ model.classes | join(', ') }}</dd>
+    <dt>Method</dt><dd>{{ model.pipeline }}</dd>
+    <dt>Built</dt><dd>{{ model.created_utc }}</dd>
+  </dl>
+</section>
+
+<div class="veil" id="overlay" hidden>
+  <div class="veil-box">
+    <div class="veil-title">Decoding</div>
+    <div class="veil-sub">Filtering, spatial projection, classification.</div>
   </div>
 </div>
 
@@ -141,7 +122,6 @@
       name.textContent = file.name + '  (' + (file.size / 1048576).toFixed(1) + ' MB)';
       submit.disabled = false;
     }
-
     input.addEventListener('change', function () { show(input.files[0]); });
 
     ['dragenter', 'dragover'].forEach(function (evt) {
@@ -162,7 +142,7 @@
     });
 
     form.addEventListener('submit', function () {
-      overlay.classList.add('show');
+      overlay.hidden = false;
       submit.disabled = true;
     });
   })();

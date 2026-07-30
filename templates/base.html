@@ -1,47 +1,46 @@
 <!DOCTYPE html>
-<html lang="en">
+{# `doc` marks a plain document page: no specimen, normal scrolling. The live
+   view overrides it and takes the whole window. #}
+<html lang="en"{% block docflag %} data-doc="1"{% endblock %}>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{% block title %}Brainwave-to-Text{% endblock %}</title>
+  <title>{% block title %}Brainwave decoder{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}" />
 
   <!-- Must run before any page script: module scripts execute in document
        order, and content blocks sit above the end of <body>. -->
   <script type="module">
-    import { NeuralEnvironment, decodeCortex }
-      from "{{ url_for('static', filename='brain3d.js') }}";
-
-    // Resolves once the environment exists, so pages can drive it without
-    // racing the loads. Null when WebGL is unavailable. Not named `world`: an
-    // element id already claims that global.
-    window.neuralWorld = Promise.all([
-      fetch('/api/v1/geometry').then((r) => r.json()),
-      fetch("{{ url_for('static', filename='cortex.bin') }}")
-        .then((r) => r.arrayBuffer()).then(decodeCortex),
-    ])
-      .then(([geo, cortex]) => {
-        const env = new NeuralEnvironment(
-          document.getElementById('world'), geo, cortex,
-        );
-        document.documentElement.dataset.world = 'live';
-        document.documentElement.dataset.channels = geo.n_channels;
-        return env;
-      })
-      .catch((e) => {
-        console.error('neural environment failed', e);
-        document.documentElement.dataset.world = 'off';
-        return null;
-      });
+    // Resolves once the specimen exists, so pages can drive it without racing
+    // the loads. Null when WebGL is unavailable, and null on document pages:
+    // the canvas is fixed to the viewport, so on a page whose content is not
+    // itself positioned it lies over everything and silently swallows every
+    // click. Not named `world` — an element id already claims that.
+    window.neuralWorld = document.documentElement.dataset.doc
+      ? Promise.resolve(null)
+      : import("{{ url_for('static', filename='brain3d.js') }}").then((m) =>
+        Promise.all([
+          fetch('/api/v1/geometry').then((r) => r.json()),
+          fetch("{{ url_for('static', filename='cortex.bin') }}")
+            .then((r) => r.arrayBuffer()).then(m.decodeCortex),
+        ]).then(([geo, cortex]) => {
+          const env = new m.NeuralEnvironment(
+            document.getElementById('world'), geo, cortex,
+          );
+          document.documentElement.dataset.world = 'live';
+          document.documentElement.dataset.channels = geo.n_channels;
+          return env;
+        })).catch((e) => {
+          console.error('specimen failed to load', e);
+          document.documentElement.dataset.world = 'off';
+          return null;
+        });
   </script>
 </head>
 <body class="{% block bodyclass %}doc{% endblock %}">
-  <!-- The scene is the page. Every view is rendered inside it. -->
   <canvas id="world" aria-hidden="true"></canvas>
-  <div class="vignette" aria-hidden="true"></div>
 
-  <!-- Rides the tip of the leader drawn out of the selected structure. -->
-  <!-- Leader and label for the selected structure. Drawn in screen space: a
+  <!-- Leader and label for the selected structure, drawn in screen space: a
        3D leader of fixed length points wherever the anatomy happens to face,
        which is off the page as often as not. -->
   <aside id="region" class="callout" aria-live="polite" hidden>
@@ -61,14 +60,14 @@
     <div class="wrap">
       <a class="brand" href="{{ url_for('index') }}">
         <span class="brand-mark" aria-hidden="true"></span>
-        <span>Brainwave&#8202;&rarr;&#8202;Text</span>
+        <span>Cortical decoder</span>
       </a>
       <nav class="topbar-meta">
         <a class="navlink" href="{{ url_for('index') }}">Decode file</a>
         <a class="navlink" href="{{ url_for('live') }}">Live</a>
         {% if model %}
         <span class="pill">{{ model.task }}</span>
-        <span class="pill pill-quiet">{{ model.pipeline }}</span>
+        <span class="pill">{{ model.pipeline }}</span>
         {% endif %}
       </nav>
     </div>
@@ -78,19 +77,21 @@
 
   <main class="wrap">
     {% block content %}{% endblock %}
-  </main>
 
-  <footer class="wrap footer">
-    <p>
-      This system classifies <strong>imagined movement</strong> from scalp EEG and
-      uses the decoded commands to drive a spelling interface. It does not read
-      words, inner speech, or intent from the brain &mdash; no scalp-EEG method can.
-    </p>
-    <p class="muted">
-      Data: PhysioNet EEG Motor Movement/Imagery Database.
-      Research and educational use only; not a medical device.
-    </p>
-  </footer>
+    {% block footer %}
+    <footer class="footer">
+      <p>
+        This decodes <strong>which movement was imagined</strong> from scalp EEG.
+        It does not read words, inner speech, or intent &mdash; no scalp-EEG
+        method can.
+      </p>
+      <p>
+        Data: PhysioNet EEG Motor Movement/Imagery Database. Research and
+        educational use only; not a medical device.
+      </p>
+    </footer>
+    {% endblock %}
+  </main>
 
   <!-- A module, so it runs after the head bootstrap that creates
        window.neuralWorld. A classic script here executes during parse, before
