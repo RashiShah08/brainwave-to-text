@@ -160,6 +160,7 @@ const TISSUE_VERT = `
   uniform vec3  uHiCol[${N_REGIONS}];
   varying vec3 vN;
   varying vec3 vP;
+  varying vec3 vObj;
   varying float vSulc;
   varying float vHi;
   varying vec3 vHiCol;
@@ -168,6 +169,7 @@ const TISSUE_VERT = `
     vHi = uHi[r];
     vHiCol = uHiCol[r];
     vSulc = aDepth;
+    vObj = position;
     vN = normalize(normalMatrix * normal);
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
     vP = mv.xyz;
@@ -197,11 +199,33 @@ const TISSUE_FRAG = `
   uniform vec3 uMid;
   uniform vec3 uShade;
   uniform vec3 uPaper;
+  uniform vec3 uVessel;
   varying vec3 vN;
   varying vec3 vP;
+  varying vec3 vObj;
   varying float vSulc;
   varying float vHi;
   varying vec3 vHiCol;
+
+  float h31(vec3 p) {
+    return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+  }
+
+  float vnoise(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float n000 = h31(i + vec3(0.0, 0.0, 0.0));
+    float n100 = h31(i + vec3(1.0, 0.0, 0.0));
+    float n010 = h31(i + vec3(0.0, 1.0, 0.0));
+    float n110 = h31(i + vec3(1.0, 1.0, 0.0));
+    float n001 = h31(i + vec3(0.0, 0.0, 1.0));
+    float n101 = h31(i + vec3(1.0, 0.0, 1.0));
+    float n011 = h31(i + vec3(0.0, 1.0, 1.0));
+    float n111 = h31(i + vec3(1.0, 1.0, 1.0));
+    return mix(mix(mix(n000, n100, f.x), mix(n010, n110, f.x), f.y),
+               mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y), f.z);
+  }
 
   void main() {
     vec3 N = normalize(vN);
@@ -220,6 +244,21 @@ const TISSUE_FRAG = `
     vec3 col = mix(uShade, uMid, pow(clamp(kw, 0.0, 1.0), 1.20));
     col = mix(col, uLit, kd * 0.80);
     col += uMid * fd * 0.20;
+
+    // Tissue is not one colour. Broad mottling shifts the hue between the two
+    // tones, fine grain breaks up the remaining flatness, and without either
+    // the surface reads as moulded plastic however well it is lit.
+    float mottle = vnoise(vObj * 7.0) * 0.62 + vnoise(vObj * 17.0) * 0.38;
+    col *= 0.90 + mottle * 0.20;
+    col = mix(col, col * vec3(1.03, 0.97, 0.96), mottle);
+    col *= 0.985 + vnoise(vObj * 74.0) * 0.03;
+
+    // Pial vessels: ridged noise, so it forms branching lines rather than
+    // blobs. They run over the crowns and disappear into the sulci, which is
+    // where the real ones are hidden.
+    float ridge = 1.0 - abs(vnoise(vObj * 17.0) * 2.0 - 1.0);
+    float vessel = smoothstep(0.93, 0.999, ridge) * (1.0 - depth) * 0.38;
+    col = mix(col, uVessel, vessel);
 
     // Sulcal occlusion, straight from the measured convexity. This is what
     // makes the convolutions read.
@@ -409,9 +448,12 @@ export class NeuralEnvironment {
         uHiCol: { value: this.uHiCol },
         // Muted anatomical tones, kept in the paper's family so the specimen
         // belongs to the plate rather than sitting on top of it.
-        uLit: { value: new THREE.Color('#d8c6b4') },
-        uMid: { value: new THREE.Color('#a98d78') },
-        uShade: { value: new THREE.Color('#54423a') },
+        // Fixed cortex is grey-pink, not tan. The earlier values leaned warm
+        // enough to read as gingerbread.
+        uLit: { value: new THREE.Color('#cfc1b8') },
+        uMid: { value: new THREE.Color('#9d8a81') },
+        uShade: { value: new THREE.Color('#4c403c') },
+        uVessel: { value: new THREE.Color('#7d5148') },
         uPaper: { value: new THREE.Color('#ece3cf') },
       },
       vertexShader: TISSUE_VERT,
@@ -1016,23 +1058,31 @@ export class NeuralEnvironment {
   /**
    * Aim the specimen so a structure faces the reader.
    *
-   * Rotation is composed Y then X ('YXZ'), so for an anchor direction d the
-   * angles that bring it to face the camera fall straight out: pitch levels d
-   * in the YZ plane, then yaw swings what is left onto +z. Solving it this way
-   * rather than slerping keeps drag and aim on the same two controls.
+   * Elevation goes to pitch and azimuth to yaw, in that order, because the rig
+   * applies X before Y. Solving pitch as atan2(dy, dz) instead is wrong in a
+   * way that only shows at the poles: a frontal structure needs nearly 180
+   * degrees of *pitch*, the clamp below flattens that to almost nothing, yaw
+   * comes out near zero, and clicking the frontal lobe turns the brain to show
+   * its back.
+   *
+   * Pitch is clamped because aiming a low structure dead-on tips the specimen
+   * onto its base and shows the generated cerebellum and stem end-on, a view no
+   * plate is drawn from. Yaw carries the rest, and always can: it is a full
+   * turntable.
    */
   _aimAt(id) {
     const a = this.anchor[id];
     if (!a) return;
     const d = a.clone().normalize();
-    const pitch = Math.atan2(d.y, d.z);
-    const yaw = Math.atan2(-d.x, Math.hypot(d.y, d.z));
 
-    // Yaw does most of the work. Aiming a low structure such as the temporal
-    // lobe dead-on tips the specimen onto its base, showing the generated
-    // cerebellum and stem end-on — a view no plate is ever drawn from. Tilt is
-    // kept to a modest angle and the structure comes far enough round to read.
-    this.targetPitch = Math.max(-0.42, Math.min(0.42, pitch));
+    const pitch = Math.max(-0.42, Math.min(0.42,
+      Math.asin(Math.max(-1, Math.min(1, d.y)))));
+    // Where the anchor sits after that pitch, so yaw solves against the real
+    // remaining offset rather than the original direction.
+    const uz = d.y * Math.sin(pitch) + d.z * Math.cos(pitch);
+    const yaw = Math.atan2(-d.x, uz);
+
+    this.targetPitch = pitch;
     // Take the short way round rather than unwinding several turns.
     let t = yaw;
     while (t - this.yaw > Math.PI) t -= Math.PI * 2;
