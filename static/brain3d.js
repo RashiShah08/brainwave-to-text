@@ -352,6 +352,8 @@ export class NeuralEnvironment {
     this._cortexMesh(cortex);
     this._cerebellum();
     this._stem();
+    this._anchors();
+    this._callout();
     this._project();
     this._sites();
     this._margin();
@@ -386,6 +388,9 @@ export class NeuralEnvironment {
     this.cam = new THREE.PerspectiveCamera(44, 1, 0.1, 60);
     this.scene.add(this.cam);
     this.rig = new THREE.Group();
+    // Turntable order, so yaw and pitch stay independent and _aimAt can solve
+    // for them directly.
+    this.rig.rotation.order = 'YXZ';
     this.rig.rotation.z = 0.03;
     this.scene.add(this.rig);
     this.dotTex = inkDot(0.74);
@@ -516,8 +521,8 @@ export class NeuralEnvironment {
     // Placed against the real cortex: tucked below the occipital lobe and
     // behind the temporal lobes. fsaverage's pial surface is cortex only, so
     // the cerebellum and stem stay generated.
-    const C = { x: 0, y: -0.40, z: 0.62 };
-    const R = { x: 0.40, y: 0.21, z: 0.27 };
+    const C = { x: 0, y: -0.42, z: 0.74 };
+    const R = { x: 0.36, y: 0.19, z: 0.24 };
     // Below 5 the facets show: it is a small smooth blob next to real cortex,
     // so any faceting on it is the first thing the eye finds.
     const detail = this.soft ? 5 : 6;
@@ -525,9 +530,11 @@ export class NeuralEnvironment {
       detail,
       (dx, dy, dz) => {
         // Tight horizontal ridges, plus a shallow vermis groove at the midline.
-        const folia = Math.sin(dy * 46) * 0.5 + Math.sin(dy * 71 + 1.3) * 0.2;
+        // Folia frequency has to stay inside what this tessellation can carry;
+        // finer than about 26 and it aliases into visible icosahedral facets.
+        const folia = Math.sin(dy * 26) * 0.5 + Math.sin(dy * 41 + 1.3) * 0.2;
         const vermis = Math.exp(-(dx * dx) / 0.006);
-        const k = 1 + folia * 0.030 - vermis * 0.05;
+        const k = 1 + folia * 0.022 - vermis * 0.045;
         _bs.x = C.x + dx * R.x * k;
         _bs.y = C.y + dy * R.y * k;
         _bs.z = C.z + dz * R.z * k;
@@ -542,14 +549,14 @@ export class NeuralEnvironment {
 
   _stem() {
     const top = { x: 0, y: -0.20, z: 0.16 };
-    const bot = { x: 0, y: -0.88, z: 0.30 };
+    const bot = { x: 0, y: -0.78, z: 0.30 };
     const detail = this.soft ? 4 : 5;
     this.stemMesh = this._shell(
       detail,
       (dx, dy, dz) => {
         // A tapering trunk: `dy` selects the height, the other two the ring.
         const t = (1 - dy) * 0.5;                       // 0 at top, 1 at bottom
-        const rad = 0.165 * (1 - 0.42 * t);
+        const rad = 0.115 * (1 - 0.42 * t);
         const ring = Math.sqrt(Math.max(1e-4, dx * dx + dz * dz)) || 1;
         const bulge = 1 + 0.10 * Math.exp(-((t - 0.28) ** 2) / 0.02);
         _bs.x = top.x + (bot.x - top.x) * t + (dx / ring) * rad * bulge;
@@ -560,6 +567,77 @@ export class NeuralEnvironment {
       },
       () => REGION.BRAINSTEM,
     );
+  }
+
+  /**
+   * A point on the surface to hang each structure's callout from, and to aim
+   * the specimen at when it is selected. The centroid of a folded region sits
+   * *inside* the brain, so it is used only as a direction: the anchor is the
+   * vertex of that region lying furthest along it.
+   */
+  _anchors() {
+    const pos = this.cortexPos;
+    const reg = this.cortexRegion;
+    const sum = [];
+    const count = new Float32Array(N_REGIONS);
+    for (let r = 0; r < N_REGIONS; r++) sum.push(new THREE.Vector3());
+
+    for (let i = 0; i < this.cortexN; i++) {
+      const k = i * 3;
+      const r = reg[i];
+      sum[r].x += pos[k]; sum[r].y += pos[k + 1]; sum[r].z += pos[k + 2];
+      count[r] += 1;
+    }
+
+    this.anchor = [];
+    for (let r = 0; r < N_REGIONS; r++) {
+      if (count[r] === 0) { this.anchor.push(null); continue; }
+      const dir = sum[r].multiplyScalar(1 / count[r]).normalize();
+      let best = -1;
+      let bd = -Infinity;
+      for (let i = 0; i < this.cortexN; i++) {
+        if (reg[i] !== r) continue;
+        const k = i * 3;
+        const len = Math.hypot(pos[k], pos[k + 1], pos[k + 2]) || 1;
+        const d = (pos[k] * dir.x + pos[k + 1] * dir.y + pos[k + 2] * dir.z) / len;
+        if (d > bd) { bd = d; best = i; }
+      }
+      const k = best * 3;
+      this.anchor.push(new THREE.Vector3(pos[k], pos[k + 1], pos[k + 2]));
+    }
+
+    // These two are generated, so they have no cortical vertices to average.
+    this.anchor[REGION.CEREBELLUM] = new THREE.Vector3(0.30, -0.46, 0.82);
+    this.anchor[REGION.BRAINSTEM] = new THREE.Vector3(0.12, -0.62, 0.28);
+  }
+
+  /**
+   * Leader and tick for the selected structure, grown from nothing. The
+   * geometry is rewritten every frame from the anchor and the growth
+   * parameter, which is cheap at four vertices.
+   */
+  _callout() {
+    const pos = new Float32Array(4 * 3);
+    const col = new Float32Array(4 * 3);
+    const ink = new Float32Array(4);
+    for (let i = 0; i < 4; i++) {
+      col[i * 3] = OXBLOOD.r; col[i * 3 + 1] = OXBLOOD.g; col[i * 3 + 2] = OXBLOOD.b;
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    g.setAttribute('aInk', new THREE.BufferAttribute(ink, 1));
+
+    this.lead = this._lines([], [], []);
+    this.lead.geometry.dispose();
+    this.lead.geometry = g;
+    // A callout is drawn over the figure, not buried in it.
+    this.lead.material.depthTest = false;
+    this.lead.renderOrder = 20;
+    this.rig.add(this.lead);
+
+    this.leadT = 0;
+    this.leadTip = new THREE.Vector3();
   }
 
   /**
@@ -817,6 +895,9 @@ export class NeuralEnvironment {
 
     addEventListener('pointerdown', (e) => {
       if (e.target.closest('a, button, select, input, label, table')) return;
+      // Without this the browser starts a text selection and drags a blue
+      // highlight across the marginalia while the specimen turns.
+      e.preventDefault();
       this.drag = { active: true, x: e.clientX, y: e.clientY, moved: 0 };
       document.body.classList.add('grabbing');
     });
@@ -897,7 +978,7 @@ export class NeuralEnvironment {
       dist,
       x: -(cx - vw / 2) * wpp,
       y: (cy - vh / 2) * wpp,
-      cx, cy, boxH, half, vw, vh,
+      cx, cy, boxW, boxH, half, vw, vh,
     };
   }
 
@@ -927,14 +1008,50 @@ export class NeuralEnvironment {
     return this.regionCount[id] > 0;
   }
 
+  /** The element to ride the callout tip. */
+  setCalloutEl(el) {
+    this.calloutEl = el || null;
+  }
+
+  /**
+   * Aim the specimen so a structure faces the reader.
+   *
+   * Rotation is composed Y then X ('YXZ'), so for an anchor direction d the
+   * angles that bring it to face the camera fall straight out: pitch levels d
+   * in the YZ plane, then yaw swings what is left onto +z. Solving it this way
+   * rather than slerping keeps drag and aim on the same two controls.
+   */
+  _aimAt(id) {
+    const a = this.anchor[id];
+    if (!a) return;
+    const d = a.clone().normalize();
+    const pitch = Math.atan2(d.y, d.z);
+    const yaw = Math.atan2(-d.x, Math.hypot(d.y, d.z));
+
+    // Yaw does most of the work. Aiming a low structure such as the temporal
+    // lobe dead-on tips the specimen onto its base, showing the generated
+    // cerebellum and stem end-on — a view no plate is ever drawn from. Tilt is
+    // kept to a modest angle and the structure comes far enough round to read.
+    this.targetPitch = Math.max(-0.42, Math.min(0.42, pitch));
+    // Take the short way round rather than unwinding several turns.
+    let t = yaw;
+    while (t - this.yaw > Math.PI) t -= Math.PI * 2;
+    while (t - this.yaw < -Math.PI) t += Math.PI * 2;
+    this.targetYaw = t;
+    this.aiming = true;
+    this.turned = true;
+  }
+
   /** Select a structure from the interface, as clicking it would. */
   select(id) {
-    this.selected = (id === this.selected || id == null || id < 0) ? -1 : id;
+    const next = (id === this.selected || id == null || id < 0) ? -1 : id;
+    this.selected = next;
+    if (next >= 0) this._aimAt(next);
     dispatchEvent(new CustomEvent('brain:select', {
-      detail: this.selected < 0 ? null : {
-        id: this.selected,
-        name: REGION_NAME[this.selected],
-        note: REGION_NOTE[this.selected],
+      detail: next < 0 ? null : {
+        id: next,
+        name: REGION_NAME[next],
+        note: REGION_NOTE[next],
       },
     }));
   }
@@ -1024,6 +1141,18 @@ export class NeuralEnvironment {
 
     if (!this.drag.active) this._pick(false);
 
+    // Turning toward a selected structure. Dragging cancels it, so the reader
+    // is never fighting the animation for control.
+    if (this.aiming && !this.drag.active) {
+      const k = 1 - Math.exp(-dt * 5.5);
+      this.yaw += (this.targetYaw - this.yaw) * k;
+      this.pitch += (this.targetPitch - this.pitch) * k;
+      if (Math.abs(this.targetYaw - this.yaw) < 0.003
+        && Math.abs(this.targetPitch - this.pitch) < 0.003) this.aiming = false;
+    } else if (this.drag.active) {
+      this.aiming = false;
+    }
+
     // Until it is turned by hand the specimen sways about a lateral view
     // rather than spinning freely: a plate should always be recognisable as
     // one, and a free spin catches it at arbitrary, unreadable angles.
@@ -1094,6 +1223,61 @@ export class NeuralEnvironment {
       this.uHi[r] = hi;
       // Oxblood is what the recording is doing; verdigris is what you selected.
       this.uHiCol[r].copy(r === this.selected ? VERDIGRIS : OXBLOOD);
+    }
+
+    // -- callout ------------------------------------------------------------
+    // The leader grows out of the structure and the label rides its tip, the
+    // way a plate numbers what it is pointing at.
+    const want = this.selected >= 0 && this.anchor[this.selected] ? 1 : 0;
+    this.leadT += (want - this.leadT) * (1 - Math.exp(-dt * 6));
+    const lp = this.lead.geometry.attributes.position.array;
+    const li = this.lead.geometry.attributes.aInk.array;
+
+    if (this.leadT > 0.01 && this.selected >= 0) {
+      const a = this.anchor[this.selected];
+      const n = a.clone().normalize();
+      const grow = this.leadT;
+      // Long enough that the tip clears the silhouette — a label sitting on
+      // the tissue is unreadable however it is styled.
+      const mid = a.clone().addScaledVector(n, 0.62 * grow);
+      const tip = mid.clone().addScaledVector(n, 0.18 * grow);
+
+      lp[0] = a.x; lp[1] = a.y; lp[2] = a.z;
+      lp[3] = mid.x; lp[4] = mid.y; lp[5] = mid.z;
+      lp[6] = mid.x; lp[7] = mid.y; lp[8] = mid.z;
+      lp[9] = tip.x; lp[10] = tip.y; lp[11] = tip.z;
+      for (let i = 0; i < 4; i++) li[i] = grow;
+      this.leadTip.copy(tip).applyMatrix4(this.rig.matrixWorld);
+    } else {
+      for (let i = 0; i < 4; i++) li[i] = 0;
+    }
+    this.lead.geometry.attributes.position.needsUpdate = true;
+    this.lead.geometry.attributes.aInk.needsUpdate = true;
+
+    if (this.calloutEl) {
+      if (this.leadT > 0.02) {
+        this.rig.updateMatrixWorld();
+        const p = this.leadTip.clone().project(this.cam);
+        // A fixed-length leader can point anywhere, including straight off the
+        // page, so the label is held inside the stage even when its tip is not.
+        const f = this._frame();
+        const padX = 18;
+        const padY = 14;
+        const x = Math.max(f.cx - f.boxW / 2 + padX, Math.min(
+          f.cx + f.boxW / 2 - padX, (p.x * 0.5 + 0.5) * innerWidth));
+        const y = Math.max(f.cy - f.boxH / 2 + padY, Math.min(
+          f.cy + f.boxH / 2 - padY, (-p.y * 0.5 + 0.5) * innerHeight));
+        // Read back toward the figure when the tip is near the right edge.
+        const flip = x > f.cx + f.boxW / 2 - 250;
+        this.calloutEl.style.transform =
+          `translate(${Math.round(x)}px, ${Math.round(y)}px)`
+          + (flip ? ' translateX(-100%)' : '');
+        this.calloutEl.dataset.flip = flip ? '1' : '0';
+        this.calloutEl.style.opacity = Math.max(0, (this.leadT - 0.35) / 0.65).toFixed(2);
+        this.calloutEl.hidden = false;
+      } else if (!this.calloutEl.hidden) {
+        this.calloutEl.hidden = true;
+      }
     }
 
     // Report to the interface at a readable rate, not every frame.

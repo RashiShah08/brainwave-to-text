@@ -40,11 +40,12 @@
   <canvas id="world" aria-hidden="true"></canvas>
   <div class="vignette" aria-hidden="true"></div>
 
-  <aside id="region" class="region-card" aria-live="polite" hidden>
-    <div class="region-eyebrow">Selected structure</div>
-    <div class="region-name"></div>
-    <p class="region-note"></p>
-    <button type="button" class="region-close" aria-label="Clear selection">&times;</button>
+  <!-- Rides the tip of the leader drawn out of the selected structure. -->
+  <aside id="region" class="callout" aria-live="polite" hidden>
+    <div class="callout-inner">
+      <div class="callout-name"></div>
+      <p class="callout-note"></p>
+    </div>
   </aside>
 
   <header class="topbar">
@@ -82,20 +83,23 @@
     </p>
   </footer>
 
-  <script>
-    // Naming panel for whatever structure is selected on the specimen.
+  <!-- A module, so it runs after the head bootstrap that creates
+       window.neuralWorld. A classic script here executes during parse, before
+       any deferred module, and would find it undefined. -->
+  <script type="module">
     (function () {
       var card = document.getElementById('region');
-      var name = card.querySelector('.region-name');
-      var note = card.querySelector('.region-note');
+      var name = card.querySelector('.callout-name');
+      var note = card.querySelector('.callout-note');
+      // Visibility and placement belong to the scene, which knows where the
+      // leader tip is; this only fills in the words.
       addEventListener('brain:select', function (e) {
-        if (!e.detail) { card.hidden = true; return; }
+        if (!e.detail) return;
         name.textContent = e.detail.name;
         note.textContent = e.detail.note;
-        card.hidden = false;
       });
-      card.querySelector('.region-close').addEventListener('click', function () {
-        card.hidden = true;
+      window.neuralWorld.then(function (env) {
+        if (env) env.setCalloutEl(card);
       });
     }());
   </script>
