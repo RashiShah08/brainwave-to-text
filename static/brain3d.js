@@ -76,6 +76,21 @@ export const REGION_NAME = [
   'Insula',
 ];
 
+/** Short forms for the key, where the full names wrap mid-phrase. */
+export const REGION_SHORT = [
+  'Frontal lobe',
+  'Motor cortex · left',
+  'Motor cortex · right',
+  'Somatosensory',
+  'Parietal lobe',
+  'Temporal lobe',
+  'Occipital lobe',
+  'Cerebellum',
+  'Brainstem',
+  'Cingulate',
+  'Insula',
+];
+
 export const REGION_NOTE = [
   'Planning and initiation of movement.',
   'Precentral gyrus. Drives the right side of the body — imagining a right-hand movement suppresses the mu/beta rhythm here.',
@@ -135,12 +150,14 @@ export function decodeCortex(buffer) {
   const magic = String.fromCharCode(
     dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3),
   );
-  if (magic !== 'CTX2') throw new Error('cortex.bin: bad magic ' + magic);
+  if (magic !== 'CTX3') throw new Error('cortex.bin: bad magic ' + magic);
 
   const nV = dv.getUint32(4, true);
   const nT = dv.getUint32(8, true);
   let o = 12;
   const position = new Float32Array(buffer.slice(o, o + nV * 12));
+  o += nV * 12;
+  const normal = new Float32Array(buffer.slice(o, o + nV * 12));
   o += nV * 12;
   const depth = new Float32Array(buffer.slice(o, o + nV * 4));
   o += nV * 4;
@@ -150,7 +167,7 @@ export function decodeCortex(buffer) {
   o += nV + ((4 - (nV % 4)) % 4);          // indices are 4-byte aligned
   const index = new Uint32Array(buffer.slice(o, o + nT * 12));
 
-  return { position, depth, ao, region, index, nV, nT };
+  return { position, normal, depth, ao, region, index, nV, nT };
 }
 
 // ── shaders ───────────────────────────────────────────────────────────────
@@ -575,7 +592,10 @@ export class NeuralEnvironment {
     g.setAttribute('aRegion', new THREE.BufferAttribute(
       Float32Array.from(cortex.region), 1,
     ));
-    g.computeVertexNormals();
+    // Baked from the full-resolution pial surface. computeVertexNormals would
+    // derive them from this triangulation instead and lose the fold detail the
+    // decimation already cost once.
+    g.setAttribute('normal', new THREE.BufferAttribute(cortex.normal, 3));
 
     this.cerebrum = new THREE.Mesh(g, this.tissueMat);
     this.rig.add(this.cerebrum);
@@ -1069,9 +1089,10 @@ export class NeuralEnvironment {
 
   // -- public ---------------------------------------------------------------
 
-  /** Names in region-id order, for building a key. */
+  /** Names in region-id order, for building a key. Short forms: the full ones
+   *  wrap mid-phrase in a narrow column and read as broken text. */
   regionNames() {
-    return REGION_NAME.slice(0, N_REGIONS);
+    return REGION_SHORT.slice(0, N_REGIONS);
   }
 
   /** Whether any contact sits over this structure, so it can be measured. */

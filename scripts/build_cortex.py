@@ -89,7 +89,7 @@ _ATLAS = {
     "insula": INSULA,
 }
 
-MAGIC = b"CTX2"
+MAGIC = b"CTX3"
 #: ico6 is 40,962 vertices per hemisphere. ico5 was a quarter of that and it
 #: showed: decimation smooths sulci from tight, deep creases into rolling
 #: hills, which is most of why the surface read as moulded rather than real.
@@ -204,6 +204,7 @@ def build() -> Path:
     positions: list[np.ndarray] = []
     regions: list[np.ndarray] = []
     depths: list[np.ndarray] = []
+    fines: list[np.ndarray] = []
     faces: list[np.ndarray] = []
     offset = 0
 
@@ -217,12 +218,23 @@ def build() -> Path:
         tris = remap[s["use_tris"]]
         assert tris.min() >= 0, "decimated triangle referenced a dropped vertex"
 
+        # Normals taken from the FULL pial surface, not from the decimated
+        # triangulation. The decimated vertices are a subset of the real ones,
+        # so their true normals are available -- and they carry fold detail
+        # finer than this triangle count could ever represent. Computing
+        # normals from the coarse mesh instead throws that detail away twice.
+        full_rr, full_tris = mne.read_surface(
+            str(fs / "surf" / f"{hemi}.pial"), verbose=False)
+        fine = _vertex_normals(full_rr.astype(np.float64), full_tris)[vertno]
+
         positions.append(rr)
         regions.append(_annot_regions(subjects_dir, hemi, vertno))
         depths.append(_sulcal_depth(subjects_dir, hemi, vertno))
+        fines.append(fine)
         faces.append(tris + offset)
         offset += len(vertno)
-        print(f"  {hemi}: {len(vertno):,} vertices, {len(tris):,} triangles")
+        print(f"  {hemi}: {len(vertno):,} of {len(full_rr):,} vertices, "
+              f"{len(tris):,} triangles")
 
     rr = np.concatenate(positions).astype(np.float64)
     region = np.concatenate(regions).astype(np.uint8)
@@ -235,9 +247,14 @@ def build() -> Path:
     xyz -= (xyz.max(axis=0) + xyz.min(axis=0)) / 2.0
     xyz *= TARGET_RADIUS / np.linalg.norm(xyz, axis=1).max()
 
+    # Same rotation as the positions, and it is a proper rotation, so normals
+    # go through it unchanged. The uniform scale does not affect them.
+    fine = np.concatenate(fines)
+    nrm = np.column_stack([fine[:, 0], fine[:, 2], -fine[:, 1]])
+    nrm /= np.maximum(np.linalg.norm(nrm, axis=1, keepdims=True), 1e-12)
+
     print("baking ambient occlusion ...")
-    normals = _vertex_normals(xyz, tris)
-    ao = _ambient_occlusion(xyz, normals)
+    ao = _ambient_occlusion(xyz, _vertex_normals(xyz, tris))
     print(f"  occlusion: mean {ao.mean():.3f}, "
           f"p95 {np.percentile(ao, 95):.3f}")
 
@@ -246,6 +263,7 @@ def build() -> Path:
         fh.write(MAGIC)
         fh.write(struct.pack("<II", len(xyz), len(tris)))
         fh.write(xyz.astype("<f4").tobytes())
+        fh.write(nrm.astype("<f4").tobytes())
         fh.write(depth.astype("<f4").tobytes())
         fh.write(ao.astype("<f4").tobytes())
         fh.write(region.tobytes())

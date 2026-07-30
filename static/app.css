@@ -145,7 +145,7 @@ a:hover { border-bottom-color: var(--oxblood); color: var(--oxblood); }
 }
 .brand-mark {
   width: 8px; height: 8px; border-radius: 50%;
-  background: var(--oxblood); box-shadow: none;
+  background: var(--oxblood); box-shadow: none; flex: none;
 }
 .topbar-meta { display: flex; align-items: center; gap: 1.35rem; }
 .navlink {
@@ -363,10 +363,12 @@ dl.spec dd {
   align-items: stretch;
 }
 
+/* The column itself does not scroll. Panels are sized to the spread and the
+   one that can grow scrolls inside itself, so nothing ever looks sliced off at
+   the bottom of the window. */
 .atlas-col {
   display: flex; flex-direction: column; gap: 1rem;
   min-height: 0; overflow-y: auto; overflow-x: hidden;
-  padding-right: 0.35rem;
   scrollbar-width: thin;
 }
 
@@ -418,11 +420,27 @@ html[data-world="off"] .stage-hint::after { content: " — plate unavailable"; }
   padding: 0.95rem 1.05rem 1.1rem;
   box-shadow: 4px 5px 0 -3px rgba(80, 62, 32, 0.11);
 }
-.panel h2 { margin-bottom: 0.75rem; }
-.panel-grow { flex: 1 1 auto; min-height: 8rem; }
+.panel h2 { margin-bottom: 0.75rem; flex: none; }
+.panel-grow {
+  flex: 1 1 auto; min-height: 7rem;
+  display: flex; flex-direction: column;
+}
+.panel-grow > .keyed {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  scrollbar-width: thin;
+}
+.panel-grow > .hint { flex: none; }
 
 .controls-stack { flex-direction: column; gap: 0.75rem; }
 .controls-stack select { width: 100%; }
+
+/* A short window has to give something up, and it is the prose rather than the
+   controls or the specimen. */
+@media (max-height: 860px) {
+  .atlas-lede { display: none; }
+  .atlas-title { font-size: clamp(1.5rem, 2vw, 1.9rem); margin: 0.7rem 0 0.4rem; }
+  .hint { font-size: 11.5px; margin-bottom: 0.7rem; }
+}
 
 @media (max-width: 1180px) {
   .atlas {
@@ -431,6 +449,7 @@ html[data-world="off"] .stage-hint::after { content: " — plate unavailable"; }
     height: auto;
   }
   .atlas-col { overflow: visible; }
+  .panel-grow > .keyed { overflow-y: visible; }
 }
 
 /* ── explanatory copy inside panels ──────────────────────────────────── */
@@ -470,13 +489,17 @@ html[data-world="off"] .stage-hint::after { content: " — plate unavailable"; }
 .keyed { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule); }
 .keyed-row { border-bottom: 1px solid var(--rule); }
 .keyed-hit {
-  display: grid; grid-template-columns: minmax(9rem, 15rem) 1fr 3.2rem;
-  gap: 1rem; align-items: center; width: 100%;
+  display: grid; grid-template-columns: minmax(0, 1fr) 4.5rem 2.6rem;
+  gap: 0.7rem; align-items: center; width: 100%;
   background: none; border: 0; cursor: pointer;
-  padding: 0.5rem 0.5rem 0.5rem 0.15rem; text-align: left; color: inherit;
+  padding: 0.34rem 0.4rem 0.34rem 0.15rem; text-align: left; color: inherit;
 }
 .keyed-hit:hover { background: rgba(143, 51, 32, 0.06); }
-.keyed-name { font-family: var(--serif); font-size: 0.95rem; color: var(--ink-2); }
+.keyed-name {
+  font-family: var(--serif); font-size: 0.88rem; color: var(--ink-2);
+  /* One line always: a name broken across two rows reads as a layout fault. */
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .keyed-track {
   position: relative; height: 8px;
   border: 1px solid var(--rule-2); background: rgba(221, 208, 178, 0.45);
