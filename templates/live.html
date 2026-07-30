@@ -115,11 +115,47 @@
       </div>
     </section>
 
+    <!-- The chain, stage by stage. Someone who has never seen EEG should be
+         able to read what is happening to the signal without being told. -->
     <section class="panel">
-      <div class="panel-head"><span>Spelled</span><b id="sp-step">0 / 5</b></div>
-      <div class="panel-body">
-        <div class="decoded" id="text"><span class="empty">nothing committed</span></div>
-        <div class="cands" id="candidates"></div>
+      <div class="panel-head"><span>Signal path</span><b>per window</b></div>
+      <div class="panel-body is-flush">
+        <ol class="path" id="path">
+          <li class="path-step" data-step="scalp">
+            <span class="path-n">1</span>
+            <span class="path-t">Scalp<em>voltage at {{ model.n_channels }} electrodes</em></span>
+            <span class="path-v" id="pv-scalp">{{ model.n_channels }} ch</span>
+          </li>
+          <li class="path-step" data-step="band">
+            <span class="path-n">2</span>
+            <span class="path-t">Band<em>keep the mu and beta rhythm</em></span>
+            <span class="path-v" id="pv-band">8&ndash;30 Hz</span>
+          </li>
+          <li class="path-step" data-step="spatial">
+            <span class="path-n">3</span>
+            <span class="path-t">Spatial filter<em>weight the sites that separate the two</em></span>
+            <span class="path-v" id="pv-spatial">CSP</span>
+          </li>
+          <li class="path-step" data-step="classify">
+            <span class="path-n">4</span>
+            <span class="path-t">Classify<em>one window, one guess</em></span>
+            <span class="path-v" id="pv-classify">&mdash;</span>
+          </li>
+          <li class="path-step" data-step="accumulate">
+            <span class="path-n">5</span>
+            <span class="path-t">Accumulate<em>wait until the evidence is decisive</em></span>
+            <span class="path-v" id="pv-accum">&mdash;</span>
+          </li>
+          <li class="path-step" data-step="command">
+            <span class="path-n">6</span>
+            <span class="path-t">Command<em>one movement, committed</em></span>
+            <span class="path-v" id="pv-command">&mdash;</span>
+          </li>
+        </ol>
+        <p class="path-foot">
+          The output is <b>which movement was imagined</b> &mdash; nothing more.
+          Scalp EEG carries no words, and this decodes none.
+        </p>
       </div>
     </section>
   </div>
@@ -148,8 +184,6 @@ const els = {
   start: document.getElementById('start'),
   stop: document.getElementById('stop'),
   status: document.getElementById('status'),
-  text: document.getElementById('text'),
-  candidates: document.getElementById('candidates'),
   bars: document.getElementById('bars'),
   keyed: document.getElementById('keyed'),
   ovStatus: document.getElementById('ov-status'),
@@ -384,9 +418,22 @@ function showDecision(label) {
   els.ovText.classList.add('pop');
   setNum('ld-class', label);
   setNum('ld-site', CONTRALATERAL[label] || '—');
+  setNum('pv-command', label);
+  pulse('command');
 }
 
-function addLogRow() { /* log lives in the decision table below */ }
+// Light a stage of the signal path as data passes through it.
+const pathSteps = {};
+document.querySelectorAll('.path-step').forEach((li) => {
+  pathSteps[li.dataset.step] = li;
+});
+function pulse(step) {
+  const li = pathSteps[step];
+  if (!li) return;
+  li.classList.remove('is-on');
+  void li.offsetWidth;
+  li.classList.add('is-on');
+}
 
 // ---- stream ---------------------------------------------------------------
 function handle(msg) {
@@ -431,6 +478,18 @@ function handle(msg) {
   state.sinceDecision += 1;
   setNum('m-windows', state.sinceDecision);
 
+  // Walk the path: every window passes stages 1-5, and only some reach 6.
+  ['scalp', 'band', 'spatial'].forEach(pulse);
+  if (msg.probabilities) {
+    const best = Object.keys(msg.probabilities)
+      .reduce((a, b) => (msg.probabilities[a] >= msg.probabilities[b] ? a : b));
+    setNum('pv-classify', best + ' ' + msg.probabilities[best].toFixed(2));
+    pulse('classify');
+  }
+  const lead = Math.max(...Object.values(msg.posterior));
+  setNum('pv-accum', state.sinceDecision + ' win · ' + lead.toFixed(2));
+  pulse('accumulate');
+
   if (msg.decision) {
     state.sinceDecision = 0;
     if (msg.decision.timed_out) state.timeouts += 1;
@@ -450,22 +509,6 @@ function handle(msg) {
     setNum('m-timeouts', state.timeouts);
     setNum('m-mean', state.decisions ? (state.windowSum / state.decisions).toFixed(1) : '—');
     setNum('m-windows', 0);
-    addLogRow();
-
-    if (msg.speller) {
-      els.text.textContent = msg.speller.text || '';
-      if (!msg.speller.text) els.text.innerHTML = '<span class="empty">nothing committed</span>';
-      if (scene) scene.setText(msg.speller.text || '');
-
-      const per = msg.speller.trials_per_character || 5;
-      setNum('sp-step', ((msg.speller.n_trials_consumed || 0) % per) + ' / ' + per);
-      els.candidates.innerHTML = '';
-      (msg.speller.partial_candidates || []).slice(0, 32).forEach((c) => {
-        const s = document.createElement('span');
-        s.className = 'cand'; s.textContent = c;
-        els.candidates.appendChild(s);
-      });
-    }
   }
 }
 
@@ -494,8 +537,7 @@ els.form.addEventListener('submit', (ev) => {
   setNum('m-mean', '—');
   setNum('ld-class', '—');
   setNum('ld-site', '—');
-  els.text.innerHTML = '<span class="empty">nothing committed</span>';
-  els.candidates.innerHTML = '';
+  ['pv-classify', 'pv-accum', 'pv-command'].forEach((i) => setNum(i, '—'));
   els.ovText.textContent = '';
   els.status.classList.remove('is-bad');
   els.status.textContent = 'decoding…';

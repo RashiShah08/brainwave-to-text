@@ -171,14 +171,23 @@ html[data-world="off"] .hint::after { content: " — no webgl"; }
 
 /* ── panels ──────────────────────────────────────────────────────────── */
 
-.col { display: flex; flex-direction: column; overflow: hidden; }
+/* Scrolls rather than clips: on a short window the fixed panels genuinely do
+   not fit, and a scrollbar says so where a sliced-off edge reads as a fault. */
+.col {
+  display: flex; flex-direction: column;
+  overflow-y: auto; overflow-x: hidden; scrollbar-width: thin;
+}
 
+/* Panels keep their natural height by default. Only the one marked to grow
+   absorbs the slack — and the shrink — so a fixed-size panel below it can
+   never be clipped by whatever sits above. */
 .panel {
   display: flex; flex-direction: column; min-height: 0;
+  flex: none;
   border-bottom: 1px solid var(--line);
 }
 .panel:last-child { border-bottom: 0; }
-.panel-grow { flex: 1 1 auto; }
+.panel-grow { flex: 1 1 auto; min-height: 2.6rem; }
 
 .panel-head {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
@@ -320,20 +329,40 @@ input[type="file"] { display: none; }
 .traces { grid-column: 1 / -1; display: flex; flex-direction: column; }
 #scope { display: block; width: 100%; flex: 1 1 auto; min-height: 0; }
 
-/* ── decoded text ────────────────────────────────────────────────────── */
+/* ── signal path ─────────────────────────────────────────────────────── */
 
-.decoded {
-  font-family: var(--mono); font-size: 17px; letter-spacing: 0.24em;
-  color: var(--fg); padding: 8px 10px; min-height: 36px;
-  background: var(--panel-2); border: 1px solid var(--line);
-  word-break: break-all;
+.path { list-style: none; margin: 0; padding: 0; }
+.path-step {
+  display: grid; grid-template-columns: 20px 1fr auto;
+  gap: 8px; align-items: baseline;
+  padding: 6px 12px; border-bottom: 1px solid var(--line);
+  border-left: 2px solid transparent;
+  transition: border-color .5s ease, background .5s ease;
 }
-.decoded .empty { font-size: 11px; letter-spacing: normal; color: var(--fg-3); }
-.cands { display: flex; gap: 3px; flex-wrap: wrap; margin-top: 7px; }
-.cand {
-  font-family: var(--mono); font-size: 9.5px; color: var(--fg-3);
-  border: 1px solid var(--line); padding: 1px 5px;
+.path-step.is-on {
+  border-left-color: var(--accent);
+  background: rgba(86, 182, 205, 0.07);
+  transition: none;                 /* snap on, fade off */
 }
+.path-n {
+  font-family: var(--mono); font-size: 9px; color: var(--fg-3);
+  text-align: right;
+}
+.path-t { font-size: 11.5px; color: var(--fg-2); }
+.path-t em {
+  display: block; font-style: normal; font-size: 10px;
+  color: var(--fg-3); margin-top: 1px;
+}
+.path-v {
+  font-family: var(--mono); font-size: 10.5px; color: var(--fg);
+  white-space: nowrap;
+}
+.path-step.is-on .path-v { color: var(--accent); }
+.path-foot {
+  margin: 0; padding: 9px 12px 11px;
+  font-size: 10.5px; line-height: 1.5; color: var(--fg-3);
+}
+.path-foot b { color: var(--fg-2); font-weight: 500; }
 
 /* ── log ─────────────────────────────────────────────────────────────── */
 

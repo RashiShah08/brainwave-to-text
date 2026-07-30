@@ -1,40 +1,33 @@
 /**
- * A solid, lit, anatomically segmented brain you can turn and click.
+ * A real, lit, anatomically segmented cortex you can turn and click.
  *
- * Modelled on the interaction of an anatomy atlas: real tissue shading, named
- * regions, and a region that lights when you select it — except here regions
- * also light on their own, driven by the decoder. Motor imagery is
- * contralateral, so a committed "right hand" flares the LEFT primary motor
- * cortex, and the live posterior warms whichever hemisphere is currently
- * winning.
+ * The surface is not generated. static/cortex.bin is the fsaverage pial
+ * surface -- reconstructed from real MRI -- baked by scripts/build_cortex.py
+ * with FreeSurfer's measured sulcal convexity, normals taken from the full
+ * 650k-triangle mesh, ambient occlusion computed against the surface itself,
+ * and the Desikan-Killiany parcellation as a per-vertex region id. Only the
+ * cerebellum and brainstem are generated, because fsaverage supplies cortex
+ * only.
  *
- * There is no brain mesh file to load. The surface is generated: a base
- * ellipsoid worked into shape by `brainSurface` (narrowed poles, temporal
- * bulge, flattened skull base, longitudinal fissure, Sylvian groove) and then
- * folded into gyri by two octaves of meandering sine. Cerebellum and brainstem
- * are separate meshes, and every vertex carries a region id assigned from its
- * position relative to the central and Sylvian sulci.
+ * Regions light for two different reasons and are coloured accordingly: warm
+ * red is what the decoder is doing, cyan is what the reader has selected.
+ * Motor imagery is contralateral, so a committed "right hand" flares the LEFT
+ * primary motor cortex.
  *
- * Two things are worth knowing before changing any of this:
+ * Two things worth knowing before changing any of this:
  *
- *   - Normals are analytic, not computed from the triangles. IcosahedronGeometry
- *     is non-indexed, so `computeVertexNormals` would give flat facets; instead
- *     each normal comes from the cross product of two finite differences of
- *     `brainSurface` itself, which is smooth regardless of tessellation.
- *   - Sulcal shading is an attribute, not a light. `aDepth` carries how deep in
- *     a fold each vertex sits and darkens it directly, which is what makes the
- *     convolutions read at a glance. No shadow pass would be affordable here.
- *
- * The palette stays with the page: warm tissue against cream paper, oxblood for
- * what the decoder is doing, verdigris for what the reader has selected.
- */
+ *   - Occlusion is baked, not lit. Sulcal convexity says which way a surface
+ *     bends, not how enclosed it is, and shading from convexity alone leaves
+ *     the two facing walls of a deep sulcus bright and the folds soft.
+ *   - Normals come from the full-resolution surface, not from this
+ *     triangulation. computeVertexNormals would throw the fold detail away a
+ *     second time, having already lost it once to decimation.
+  */
 
 import * as THREE from './three.module.min.js';
-import { strokes } from './inkfont.js';
+import { strokes } from './inkfont.js';   // pin labels only
 
-const MAX_CHARS = 22;
 const SEG_PER_GLYPH = 18;
-const GLYPH_SIZE = 0.085;
 const MAX_PINS = 9;
 // The specimen spans about y -0.88 (brainstem) to +0.60 (vertex), so it is not
 // centred on the origin and must be framed about its own middle.
@@ -407,8 +400,6 @@ export class NeuralEnvironment {
     /** Set by the page to receive live per-structure activity. */
     this.onActivity = null;
 
-    this.text = [];
-    this.glyphs = [];
     this.pins = [];
 
     this.scroll = 0;
@@ -439,7 +430,6 @@ export class NeuralEnvironment {
     this._callout();
     this._project();
     this._sites();
-    this._margin();
     this._pinwork();
     this._input();
 
@@ -793,82 +783,6 @@ export class NeuralEnvironment {
       vertexShader: STROKE_VERT, fragmentShader: STROKE_FRAG,
       transparent: true, depthWrite: false, vertexColors: true,
     }));
-  }
-
-  /** The ruled margin the decoded text is written onto, held in camera space. */
-  _margin() {
-    const max = MAX_CHARS * SEG_PER_GLYPH;
-    const pos = new Float32Array(max * 6);
-    const col = new Float32Array(max * 6);
-    const ink = new Float32Array(max * 2);
-    this.marginAt = new Float32Array(max * 2);
-    for (let i = 0; i < max * 2; i++) {
-      col[i * 3] = INK.r; col[i * 3 + 1] = INK.g; col[i * 3 + 2] = INK.b;
-    }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    g.setAttribute('aInk', new THREE.BufferAttribute(ink, 1));
-    g.setDrawRange(0, 0);
-    this.marginCount = 0;
-    this.margin = new THREE.LineSegments(g, new THREE.ShaderMaterial({
-      uniforms: { uNear: this.uNear, uFar: this.uFar },
-      vertexShader: STROKE_VERT, fragmentShader: STROKE_FRAG,
-      transparent: true, depthWrite: false, depthTest: false, vertexColors: true,
-    }));
-    this.margin.renderOrder = 10;
-    this.margin.position.set(0, -0.58, -2.0);
-    this.cam.add(this.margin);
-
-    const rp = [];
-    const rc = [];
-    const ri = [];
-    const half = (MAX_CHARS * 0.86 * GLYPH_SIZE) / 2;
-    for (let s = 0; s < 60; s++) {
-      rp.push(-half + (s / 60) * half * 2, -0.055, 0,
-        -half + ((s + 1) / 60) * half * 2, -0.055, 0);
-      for (let v = 0; v < 2; v++) {
-        rc.push(SEPIA.r, SEPIA.g, SEPIA.b);
-        ri.push(0.16 + 0.1 * Math.sin(s * 0.7));
-      }
-    }
-    this.rule = this._lines(rp, rc, ri);
-    this.rule.material.depthTest = false;
-    this.rule.renderOrder = 10;
-    this.rule.position.copy(this.margin.position);
-    this.cam.add(this.rule);
-  }
-
-  _layoutMargin() {
-    const g = this.margin.geometry;
-    const pos = g.attributes.position.array;
-    let n = 0;
-    let width = 0;
-    for (const ch of this.text) width += strokes(ch).advance * GLYPH_SIZE;
-    let x = -width / 2;
-
-    for (let gi = 0; gi < this.text.length; gi++) {
-      const { segments, advance } = strokes(this.text[gi]);
-      const glyph = this.glyphs[gi];
-      glyph.start = n;
-      for (const [x1, y1, x2, y2, at] of segments) {
-        if (n >= MAX_CHARS * SEG_PER_GLYPH) break;
-        pos[n * 6] = x + x1 * GLYPH_SIZE;
-        pos[n * 6 + 1] = y1 * GLYPH_SIZE;
-        pos[n * 6 + 2] = 0;
-        pos[n * 6 + 3] = x + x2 * GLYPH_SIZE;
-        pos[n * 6 + 4] = y2 * GLYPH_SIZE;
-        pos[n * 6 + 5] = 0;
-        this.marginAt[n * 2] = at;
-        this.marginAt[n * 2 + 1] = at;
-        n++;
-      }
-      glyph.count = n - glyph.start;
-      x += advance * GLYPH_SIZE;
-    }
-    g.setDrawRange(0, n * 2);
-    g.attributes.position.needsUpdate = true;
-    this.marginCount = n;
   }
 
   _pinwork() {
@@ -1259,29 +1173,12 @@ export class NeuralEnvironment {
       if (this.vis[i] > best) { best = this.vis[i]; site = i; }
     }
     if (site < 0) return;
-    const label = (decision.emitted && decision.emitted !== '—')
-      ? decision.emitted : (decision.label || '?').charAt(0);
+    // The class, not a spelled character: the decoder emits one of two
+    // movements and nothing downstream of that belongs on the specimen.
+    const label = (decision.label || '?').charAt(0).toUpperCase();
     this.pins.push({ site, label, age: 0 });
     if (this.pins.length > MAX_PINS) this.pins.shift();
     this._layoutPins();
-  }
-
-  setText(str) {
-    const next = Array.from(str || '');
-    const same = next.length >= this.text.length
-      && this.text.every((c, i) => c === next[i]);
-    if (!same) {
-      this.text = next.slice(-MAX_CHARS);
-      this.glyphs = this.text.map(() => ({ progress: 1, start: 0, count: 0 }));
-      this._layoutMargin();
-      return;
-    }
-    for (let i = this.text.length; i < next.length; i++) {
-      this.text.push(next[i]);
-      this.glyphs.push({ progress: 0, start: 0, count: 0 });
-      while (this.text.length > MAX_CHARS) { this.text.shift(); this.glyphs.shift(); }
-    }
-    this._layoutMargin();
   }
 
   reset() {
@@ -1289,10 +1186,7 @@ export class NeuralEnvironment {
     this.target.fill(0.42);
     this.flashAmount = 0;
     this.wash.fill(0);
-    this.text = [];
-    this.glyphs = [];
     this.pins = [];
-    this._layoutMargin();
     this._layoutPins();
   }
 
@@ -1337,15 +1231,6 @@ export class NeuralEnvironment {
     const ty = f.y + SPECIMEN_CENTRE_Y;
     this.cam.position.set(f.x + this.pointer.x * 0.05, ty - this.pointer.y * 0.04, f.dist);
     this.cam.lookAt(f.x, ty, 0);
-
-    // Keep the written line under the stage rather than under the viewport.
-    const wpp2 = (2 * 2.0 * f.half) / f.vh;
-    this.margin.position.set(
-      (f.cx - f.vw / 2) * wpp2,
-      -((f.cy + f.boxH / 2 - 30) - f.vh / 2) * wpp2,
-      -2.0,
-    );
-    this.rule.position.copy(this.margin.position);
 
     const ease = 1 - Math.exp(-dt * 7);
     this.flashAmount = Math.max(0, this.flashAmount - dt * 1.0);
@@ -1407,19 +1292,6 @@ export class NeuralEnvironment {
       this.reportIn = 0.12;
       this.onActivity(this.activity, this.selected);
     }
-
-    // -- margin lettering ---------------------------------------------------
-    const mink = this.margin.geometry.attributes.aInk.array;
-    for (const glyph of this.glyphs) {
-      if (glyph.progress < 1) glyph.progress = Math.min(1, glyph.progress + dt * 2.2);
-      for (let k = glyph.start; k < glyph.start + glyph.count; k++) {
-        const at = this.marginAt[k * 2];
-        const on = glyph.progress >= at ? 1 : Math.max(0, 1 - (at - glyph.progress) * 14);
-        mink[k * 2] = on;
-        mink[k * 2 + 1] = on;
-      }
-    }
-    this.margin.geometry.attributes.aInk.needsUpdate = true;
 
     // -- pins ---------------------------------------------------------------
     if (this.pinCount) {
