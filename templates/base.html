@@ -41,10 +41,19 @@
   <div class="vignette" aria-hidden="true"></div>
 
   <!-- Rides the tip of the leader drawn out of the selected structure. -->
+  <!-- Leader and label for the selected structure. Drawn in screen space: a
+       3D leader of fixed length points wherever the anatomy happens to face,
+       which is off the page as often as not. -->
   <aside id="region" class="callout" aria-live="polite" hidden>
+    <svg class="callout-leader" aria-hidden="true">
+      <polyline />
+      <circle r="2.5" />
+    </svg>
     <div class="callout-inner">
-      <div class="callout-name"></div>
-      <p class="callout-note"></p>
+      <div class="callout-body">
+        <div class="callout-name"></div>
+        <p class="callout-note"></p>
+      </div>
     </div>
   </aside>
 

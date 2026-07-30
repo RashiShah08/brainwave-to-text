@@ -423,6 +423,7 @@ export class NeuralEnvironment {
     this.clock = new THREE.Clock();
     this._col = new THREE.Color();
     this.soft = isSoftwareGL();
+    this.visible = 1;
     this.uNear = { value: 0.6 };
     this.uFar = { value: 6.5 };
 
@@ -702,33 +703,10 @@ export class NeuralEnvironment {
     this.anchor[REGION.BRAINSTEM] = new THREE.Vector3(0.12, -0.62, 0.28);
   }
 
-  /**
-   * Leader and tick for the selected structure, grown from nothing. The
-   * geometry is rewritten every frame from the anchor and the growth
-   * parameter, which is cheap at four vertices.
-   */
+  /** Growth state for the screen-space leader; the drawing itself is SVG. */
   _callout() {
-    const pos = new Float32Array(4 * 3);
-    const col = new Float32Array(4 * 3);
-    const ink = new Float32Array(4);
-    for (let i = 0; i < 4; i++) {
-      col[i * 3] = OXBLOOD.r; col[i * 3 + 1] = OXBLOOD.g; col[i * 3 + 2] = OXBLOOD.b;
-    }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    g.setAttribute('aInk', new THREE.BufferAttribute(ink, 1));
-
-    this.lead = this._lines([], [], []);
-    this.lead.geometry.dispose();
-    this.lead.geometry = g;
-    // A callout is drawn over the figure, not buried in it.
-    this.lead.material.depthTest = false;
-    this.lead.renderOrder = 20;
-    this.rig.add(this.lead);
-
     this.leadT = 0;
-    this.leadTip = new THREE.Vector3();
+    this.leadWorld = new THREE.Vector3();
   }
 
   /**
@@ -1024,6 +1002,7 @@ export class NeuralEnvironment {
   /** The element the specimen should be centred in and fitted to. */
   setStage(el) {
     this.stageEl = el || null;
+    this._onScroll();
   }
 
   /**
@@ -1073,9 +1052,87 @@ export class NeuralEnvironment {
     };
   }
 
+  /**
+   * The leader, drawn in screen space.
+   *
+   * The anchor is projected, then the label is placed in a gutter at whichever
+   * edge of the stage the anchor is nearer, and the leader is run to it: a
+   * diagonal into the gutter and a short horizontal tick into the label. Every
+   * part is therefore inside the stage by construction, and the line always
+   * meets the label — a leader placed in 3D does neither, since a fixed length
+   * along the surface normal points wherever the anatomy happens to face and
+   * foreshortens to nothing when that is toward the reader.
+   */
+  _drawCallout() {
+    const el = this.calloutEl;
+    if (!el) return;
+
+    if (this.leadT <= 0.02 || this.selected < 0 || !this.anchor[this.selected]) {
+      if (!el.hidden) el.hidden = true;
+      return;
+    }
+
+    this.rig.updateMatrixWorld();
+    const p = this.leadWorld.copy(this.anchor[this.selected])
+      .applyMatrix4(this.rig.matrixWorld).project(this.cam);
+    const ax = (p.x * 0.5 + 0.5) * innerWidth;
+    const ay = (-p.y * 0.5 + 0.5) * innerHeight;
+
+    const f = this._frame();
+    const left = f.cx - f.boxW / 2;
+    const right = f.cx + f.boxW / 2;
+    const top = f.cy - f.boxH / 2;
+    const bottom = f.cy + f.boxH / 2;
+
+    const side = ax < f.cx ? 'left' : 'right';
+    const TICK = 16;
+    const gutter = side === 'left' ? left + 8 : right - 8;
+    const box = this.leadLabel.getBoundingClientRect();
+    const labelW = box.width || 180;
+    const labelH = box.height || 48;
+
+    // Keep the label wholly inside the stage, then aim the leader at it.
+    const ly = Math.max(top + 8, Math.min(bottom - labelH - 8, ay - labelH / 2));
+    const my = ly + Math.min(labelH / 2, 14);
+    const elbow = side === 'left' ? gutter + TICK : gutter - TICK;
+
+    this.leadLine.setAttribute('points',
+      `${ax.toFixed(1)},${ay.toFixed(1)} ${elbow.toFixed(1)},${my.toFixed(1)} `
+      + `${gutter.toFixed(1)},${my.toFixed(1)}`);
+    this.leadDot.setAttribute('cx', ax.toFixed(1));
+    this.leadDot.setAttribute('cy', ay.toFixed(1));
+
+    // Roll the stroke out from the structure rather than fading it in.
+    const len = Math.hypot(elbow - ax, my - ay) + TICK + 4;
+    this.leadLine.style.setProperty('--len', len.toFixed(0));
+    this.leadLine.style.setProperty('--dash',
+      (len * (1 - Math.min(1, this.leadT * 1.25))).toFixed(1));
+
+    const lx = side === 'left' ? gutter : gutter - labelW;
+    this.leadLabel.style.transform =
+      `translate(${Math.round(lx)}px, ${Math.round(ly)}px)`;
+    this.leadDot.style.opacity = this.leadT.toFixed(2);
+    this.leadLabel.style.opacity =
+      Math.max(0, (this.leadT - 0.45) / 0.55).toFixed(2);
+    el.dataset.side = side;
+    el.hidden = false;
+  }
+
   _onScroll() {
     const max = Math.max(1, document.body.scrollHeight - innerHeight);
     this.scroll = Math.min(1, Math.max(0, scrollY / max));
+
+    // Once the spread has scrolled away the specimen has no business showing
+    // through whatever is below it. Fade with the stage, and stop rendering
+    // entirely when it is gone.
+    let vis = 1;
+    if (this.stageEl) {
+      const r = this.stageEl.getBoundingClientRect();
+      const shown = Math.min(innerHeight, r.bottom) - Math.max(0, r.top);
+      vis = Math.max(0, Math.min(1, shown / Math.max(1, r.height * 0.55)));
+    }
+    this.visible = vis;
+    this.canvas.style.opacity = vis.toFixed(3);
   }
 
   _resize() {
@@ -1100,9 +1157,12 @@ export class NeuralEnvironment {
     return this.regionCount[id] > 0;
   }
 
-  /** The element to ride the callout tip. */
+  /** The callout overlay: an SVG leader plus the label that terminates it. */
   setCalloutEl(el) {
     this.calloutEl = el || null;
+    this.leadLine = el ? el.querySelector('polyline') : null;
+    this.leadDot = el ? el.querySelector('circle') : null;
+    this.leadLabel = el ? el.querySelector('.callout-inner') : null;
   }
 
   /**
@@ -1239,6 +1299,13 @@ export class NeuralEnvironment {
     const dt = Math.min(this.clock.getDelta(), 0.05);
     const t = this.clock.elapsedTime;
 
+    // Scrolled past the spread: nothing to draw, and no reason to spend a GPU
+    // frame drawing it.
+    if (this.visible <= 0.01) {
+      if (this.calloutEl && !this.calloutEl.hidden) this.calloutEl.hidden = true;
+      return;
+    }
+
     if (!this.drag.active) this._pick(false);
 
     // Turning toward a selected structure. Dragging cancels it, so the reader
@@ -1326,59 +1393,9 @@ export class NeuralEnvironment {
     }
 
     // -- callout ------------------------------------------------------------
-    // The leader grows out of the structure and the label rides its tip, the
-    // way a plate numbers what it is pointing at.
     const want = this.selected >= 0 && this.anchor[this.selected] ? 1 : 0;
     this.leadT += (want - this.leadT) * (1 - Math.exp(-dt * 6));
-    const lp = this.lead.geometry.attributes.position.array;
-    const li = this.lead.geometry.attributes.aInk.array;
-
-    if (this.leadT > 0.01 && this.selected >= 0) {
-      const a = this.anchor[this.selected];
-      const n = a.clone().normalize();
-      const grow = this.leadT;
-      // Long enough that the tip clears the silhouette — a label sitting on
-      // the tissue is unreadable however it is styled.
-      const mid = a.clone().addScaledVector(n, 0.62 * grow);
-      const tip = mid.clone().addScaledVector(n, 0.18 * grow);
-
-      lp[0] = a.x; lp[1] = a.y; lp[2] = a.z;
-      lp[3] = mid.x; lp[4] = mid.y; lp[5] = mid.z;
-      lp[6] = mid.x; lp[7] = mid.y; lp[8] = mid.z;
-      lp[9] = tip.x; lp[10] = tip.y; lp[11] = tip.z;
-      for (let i = 0; i < 4; i++) li[i] = grow;
-      this.leadTip.copy(tip).applyMatrix4(this.rig.matrixWorld);
-    } else {
-      for (let i = 0; i < 4; i++) li[i] = 0;
-    }
-    this.lead.geometry.attributes.position.needsUpdate = true;
-    this.lead.geometry.attributes.aInk.needsUpdate = true;
-
-    if (this.calloutEl) {
-      if (this.leadT > 0.02) {
-        this.rig.updateMatrixWorld();
-        const p = this.leadTip.clone().project(this.cam);
-        // A fixed-length leader can point anywhere, including straight off the
-        // page, so the label is held inside the stage even when its tip is not.
-        const f = this._frame();
-        const padX = 18;
-        const padY = 14;
-        const x = Math.max(f.cx - f.boxW / 2 + padX, Math.min(
-          f.cx + f.boxW / 2 - padX, (p.x * 0.5 + 0.5) * innerWidth));
-        const y = Math.max(f.cy - f.boxH / 2 + padY, Math.min(
-          f.cy + f.boxH / 2 - padY, (-p.y * 0.5 + 0.5) * innerHeight));
-        // Read back toward the figure when the tip is near the right edge.
-        const flip = x > f.cx + f.boxW / 2 - 250;
-        this.calloutEl.style.transform =
-          `translate(${Math.round(x)}px, ${Math.round(y)}px)`
-          + (flip ? ' translateX(-100%)' : '');
-        this.calloutEl.dataset.flip = flip ? '1' : '0';
-        this.calloutEl.style.opacity = Math.max(0, (this.leadT - 0.35) / 0.65).toFixed(2);
-        this.calloutEl.hidden = false;
-      } else if (!this.calloutEl.hidden) {
-        this.calloutEl.hidden = true;
-      }
-    }
+    this._drawCallout();
 
     // Report to the interface at a readable rate, not every frame.
     this.reportIn -= dt;

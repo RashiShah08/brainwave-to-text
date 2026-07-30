@@ -81,26 +81,38 @@ body.grabbing, body.grabbing * {
 
 /* ── selected structure ──────────────────────────────────────────────── */
 
-/* Sits at the tip of the drawn leader, so the label and the line are one
-   gesture. The scene owns its position and opacity; the transform below is
-   only the nudge off the tip. */
+/* A full-viewport overlay: the leader is drawn in it and the label is placed
+   in a fixed gutter at the edge of the stage, so the two are always one
+   connected gesture and neither can leave the page. */
 .callout {
-  position: fixed; left: 0; top: 0; z-index: 30;
-  width: max-content; max-width: 15rem;
+  position: fixed; inset: 0; z-index: 30;
   pointer-events: none;
-  will-change: transform;
 }
 .callout[hidden] { display: none; }
-.callout::before {
-  content: ""; position: absolute; left: -5px; top: 0.42rem;
-  width: 5px; height: 1px; background: var(--oxblood);
+
+.callout-leader {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  overflow: visible;
+}
+.callout-leader polyline {
+  fill: none; stroke: var(--oxblood); stroke-width: 1;
+  stroke-linejoin: round; stroke-linecap: round;
+  /* Rolled out rather than switched on; the scene sets the offset. */
+  stroke-dasharray: var(--len, 600); stroke-dashoffset: var(--dash, 600);
+}
+.callout-leader circle { fill: var(--oxblood); }
+
+.callout-inner {
+  position: absolute; top: 0; left: 0;
+  width: max-content; max-width: 14rem;
+  will-change: transform;
 }
 /* Paper backing. A plate label is printed on the sheet, not on the specimen,
-   and without it the note is illegible wherever the tip lands. */
-.callout-inner {
-  margin-left: 0.6rem;
+   and without it the note is illegible wherever it lands. */
+.callout-inner > * { display: block; }
+.callout-body {
   padding: 0.42rem 0.7rem 0.5rem;
-  background: rgba(238, 230, 212, 0.93);
+  background: rgba(238, 230, 212, 0.94);
   border: 1px solid rgba(143, 51, 32, 0.32);
   box-shadow: 3px 4px 0 -2px rgba(80, 62, 32, 0.13);
 }
@@ -114,10 +126,8 @@ body.grabbing, body.grabbing * {
   margin: 0; font-size: 11.5px; line-height: 1.45;
   color: var(--ink-2); font-style: italic;
 }
-/* Near the right edge the label reads back toward the figure. */
-.callout[data-flip="1"] { text-align: right; }
-.callout[data-flip="1"] .callout-inner { margin-left: 0; margin-right: 0.6rem; }
-.callout[data-flip="1"]::before { left: auto; right: -5px; }
+/* In the right-hand gutter the label reads back toward the figure. */
+.callout[data-side="right"] .callout-inner { text-align: right; }
 
 a {
   color: var(--ink); text-decoration: none;
