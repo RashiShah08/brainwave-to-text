@@ -26,7 +26,6 @@
 
 import * as THREE from './three.module.min.js';
 
-const MAX_PINS = 9;
 // The specimen spans about y -0.88 (brainstem) to +0.60 (vertex), so it is not
 // centred on the origin and must be framed about its own middle.
 const SPECIMEN_HALF = 0.80;
@@ -398,7 +397,6 @@ export class NeuralEnvironment {
     /** Set by the page to receive live per-structure activity. */
     this.onActivity = null;
 
-    this.pins = [];
 
     this.scroll = 0;
     this.scrollEased = 0;
@@ -428,7 +426,6 @@ export class NeuralEnvironment {
     this._callout();
     this._project();
     this._sites();
-    this._pinwork();
     this._input();
 
     addEventListener('resize', () => this._resize(), { passive: true });
@@ -783,85 +780,6 @@ export class NeuralEnvironment {
     }));
   }
 
-  _pinwork() {
-    const max = MAX_PINS * 3;      // stalk plus a two-stroke cross
-    const pos = new Float32Array(max * 6);
-    const col = new Float32Array(max * 6);
-    const ink = new Float32Array(max * 2);
-    this.pinOf = new Int32Array(max * 2);
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    g.setAttribute('aInk', new THREE.BufferAttribute(ink, 1));
-    g.setDrawRange(0, 0);
-    this.pinCount = 0;
-    this.pinwork = this._lines([], [], []);
-    this.pinwork.geometry.dispose();
-    this.pinwork.geometry = g;
-    this.rig.add(this.pinwork);
-  }
-
-  /**
-   * Where each committed decision landed: a short stalk off the surface and a
-   * fiducial cross at the site. Deliberately unlettered — hand-drawn glyphs
-   * floating on the tissue belonged to an earlier, paper-bound design, and the
-   * decision's class, time and confidence read far better in the log than as
-   * two strokes on a curved surface.
-   */
-  _layoutPins() {
-    const g = this.pinwork.geometry;
-    const pos = g.attributes.position.array;
-    const col = g.attributes.color.array;
-    const LEADER = 0.13;
-    const ARM = 0.035;
-    let n = 0;
-
-    const right = new THREE.Vector3();
-    const up = new THREE.Vector3();
-    const worldUp = new THREE.Vector3(0, 1, 0);
-    const a = new THREE.Vector3();
-    const b = new THREE.Vector3();
-    const p1 = new THREE.Vector3();
-    const p2 = new THREE.Vector3();
-
-    const push = (q1, q2, pinIndex, tint) => {
-      if (n >= this.pinOf.length / 2) return;
-      pos[n * 6] = q1.x; pos[n * 6 + 1] = q1.y; pos[n * 6 + 2] = q1.z;
-      pos[n * 6 + 3] = q2.x; pos[n * 6 + 4] = q2.y; pos[n * 6 + 5] = q2.z;
-      for (let v = 0; v < 2; v++) {
-        const k = (n * 2 + v) * 3;
-        col[k] = tint.r; col[k + 1] = tint.g; col[k + 2] = tint.b;
-        this.pinOf[n * 2 + v] = pinIndex;
-      }
-      n++;
-    };
-
-    this.pins.forEach((pin, pi) => {
-      const site = this.site[pin.site];
-      const nrm = this.normal[pin.site];
-      a.copy(site);
-      b.copy(site).addScaledVector(nrm, LEADER);
-      push(a, b, pi, OXBLOOD);
-
-      right.crossVectors(worldUp, nrm);
-      if (right.lengthSq() < 1e-6) right.set(1, 0, 0);
-      right.normalize();
-      up.crossVectors(nrm, right).normalize();
-
-      // Cross at the head of the stalk, in the plane facing outward.
-      p1.copy(b).addScaledVector(right, -ARM);
-      p2.copy(b).addScaledVector(right, ARM);
-      push(p1, p2, pi, OXBLOOD);
-      p1.copy(b).addScaledVector(up, -ARM);
-      p2.copy(b).addScaledVector(up, ARM);
-      push(p1, p2, pi, OXBLOOD);
-    });
-
-    g.setDrawRange(0, n * 2);
-    g.attributes.position.needsUpdate = true;
-    g.attributes.color.needsUpdate = true;
-    this.pinCount = n;
-  }
 
   // -- interaction ----------------------------------------------------------
 
@@ -1164,28 +1082,24 @@ export class NeuralEnvironment {
     }
   }
 
+  /**
+   * A committed decision. The responding structure lights and *stays* lit
+   * until the next one replaces it — markers standing off the surface were
+   * invisible until the specimen was turned, and the anatomy itself is the
+   * clearer place to say where a decision landed.
+   */
   commit(decision) {
-    if (!decision) return;
+    if (!decision || decision.timed_out) return;
     this.flash(decision.label);
-    let site = -1;
-    let best = -Infinity;
-    for (let i = 0; i < this.n; i++) {
-      if (this.electrodes[i].region !== this.flashSide) continue;
-      if (this.vis[i] > best) { best = this.vis[i]; site = i; }
-    }
-    if (site < 0) return;
-    this.pins.push({ site, age: 0 });
-    if (this.pins.length > MAX_PINS) this.pins.shift();
-    this._layoutPins();
   }
 
   reset() {
     this.power.fill(0.42);
     this.target.fill(0.42);
     this.flashAmount = 0;
+    this.flashRegion = -1;      // else the last run's answer stays lit
+    this.flashSide = null;
     this.wash.fill(0);
-    this.pins = [];
-    this._layoutPins();
   }
 
   // -- loop -----------------------------------------------------------------
@@ -1271,7 +1185,9 @@ export class NeuralEnvironment {
       // engrave harder when it is actually above its own baseline.
       const live = Math.max(0, this.activity[r] - 0.44) * 1.5;
       let hi = Math.max(live * 0.42, this.washEased[r] * 0.34);
-      if (r === this.flashRegion) hi = Math.max(hi, this.flashAmount);
+      // The committed structure holds a floor and pulses above it, so it is
+      // still obvious which one answered a second after the pulse has gone.
+      if (r === this.flashRegion) hi = Math.max(hi, 0.46 + 0.54 * this.flashAmount);
       if (r === this.hovered && r !== this.selected) hi = Math.max(hi, 0.18);
       if (r === this.selected) hi = Math.max(hi, 0.62 + 0.08 * Math.sin(t * 2.4));
       this.uHi[r] = hi;
@@ -1291,18 +1207,6 @@ export class NeuralEnvironment {
       this.onActivity(this.activity, this.selected);
     }
 
-    // -- pins ---------------------------------------------------------------
-    if (this.pinCount) {
-      const pk = this.pinwork.geometry.attributes.aInk.array;
-      for (const pin of this.pins) pin.age += dt;
-      for (let k = 0; k < this.pinCount * 2; k++) {
-        const pin = this.pins[this.pinOf[k]];
-        const settle = pin ? Math.min(1, pin.age * 3.5) : 0;
-        const fade = pin ? Math.max(0.34, 1 - pin.age * 0.045) : 0;
-        pk[k] = 0.85 * settle * fade;
-      }
-      this.pinwork.geometry.attributes.aInk.needsUpdate = true;
-    }
 
     this.r.render(this.scene, this.cam);
   }
