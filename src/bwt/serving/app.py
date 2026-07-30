@@ -20,6 +20,7 @@ import os
 import tempfile
 import time
 import uuid
+from collections.abc import Sequence
 from pathlib import Path
 
 from flask import Flask, current_app, g, jsonify, render_template, request
@@ -215,6 +216,7 @@ def _register_routes(app: Flask) -> None:
         threshold = request.args.get("threshold", default=0.9, type=float)
         max_windows = request.args.get("max_windows", default=40, type=int)
         want_power = request.args.get("band_power", default="0") in {"1", "true"}
+        want_raw = request.args.get("raw", default="0") in {"1", "true"}
 
         if not 0.0 <= speed <= 20.0:
             raise ValueError("speed must be between 0 and 20")
@@ -234,17 +236,27 @@ def _register_routes(app: Flask) -> None:
                     threshold=threshold, max_windows=max_windows
                 )
                 total = len(stream)
-                yield _json.dumps({
+                picks = _trace_picks(predictor.card.ch_names) if want_raw else []
+                start_payload = {
                     "type": "start",
                     "classes": list(predictor.card.classes),
                     "n_windows": min(total, config.serve.max_epochs_per_request),
                     "window_seconds": predictor.card.tmax - predictor.card.tmin,
                     "step_seconds": step,
-                }) + "\n"
+                }
+                if picks:
+                    start_payload["trace"] = {
+                        "channels": [predictor.card.ch_names[i] for i in picks],
+                        "sfreq": float(predictor.card.sfreq),
+                        "samples_per_step": int(stream.step_samples),
+                    }
+                yield _json.dumps(start_payload) + "\n"
 
                 emitted = 0
                 for event in _iter_events(decoder, stream,
-                                          with_band_power=want_power):
+                                          with_band_power=want_power,
+                                          trace_picks=picks,
+                                          trace_samples=stream.step_samples if picks else 0):
                     yield _json.dumps({"type": "window", **event.to_dict()}) + "\n"
                     emitted += 1
                     if emitted >= config.serve.max_epochs_per_request:
@@ -271,7 +283,25 @@ def _register_routes(app: Flask) -> None:
         )
 
 
-def _iter_events(decoder, stream, *, with_band_power: bool = False):
+#: Channels sent as waveforms when a caller asks for them: a left / midline /
+#: right sweep across the motor strip, so the trace block reads as a montage
+#: rather than an arbitrary subset. Missing names are skipped.
+TRACE_CHANNELS = ("FC5", "C5", "CP5", "FCz", "Cz", "CPz", "FC6", "C6", "CP6")
+
+
+def _trace_picks(channels: Sequence[str]) -> list[int]:
+    """Indices of TRACE_CHANNELS in a model's channel list, else a spread."""
+    lookup = {name.upper(): i for i, name in enumerate(channels)}
+    picks = [lookup[n.upper()] for n in TRACE_CHANNELS if n.upper() in lookup]
+    if picks:
+        return picks
+    step = max(1, len(channels) // 9)
+    return list(range(0, len(channels), step))[:9]
+
+
+def _iter_events(decoder, stream, *, with_band_power: bool = False,
+                 trace_picks: Sequence[int] | None = None,
+                 trace_samples: int = 0):
     """Yield streaming events one at a time.
 
     ``StreamingDecoder.run`` collects everything before returning, which defeats
@@ -311,8 +341,16 @@ def _iter_events(decoder, stream, *, with_band_power: bool = False):
         )
 
         if normalise is not None:
-            raw = channel_band_power(window.data, decoder.predictor.card.sfreq)
-            event.band_power = [float(v) for v in normalise(raw)]
+            power = channel_band_power(window.data, decoder.predictor.card.sfreq)
+            event.band_power = [float(v) for v in normalise(power)]
+
+        if trace_picks and trace_samples > 0:
+            # Only the samples this step advanced by. Windows overlap, so
+            # sending the whole window would draw the same signal repeatedly.
+            block = window.data[np.asarray(trace_picks), -trace_samples:]
+            event.raw = {
+                "samples": [[round(float(v), 1) for v in row] for row in block],
+            }
 
         if decision is not None:
             if decision.label is not None and decoder.speller is not None:

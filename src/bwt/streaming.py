@@ -193,6 +193,10 @@ class StreamEvent:
     #: [0, 1] against a running baseline. Present only when the caller asks for
     #: it, since it costs a filter pass per window.
     band_power: list[float] | None = None
+    #: The recording itself, for a subset of channels: the samples this step
+    #: advanced by, in microvolts, so successive events tile without overlap.
+    #: Band power is an envelope; this is the waveform underneath it.
+    raw: dict | None = None
 
     def to_dict(self) -> dict:
         payload = {
@@ -208,6 +212,8 @@ class StreamEvent:
             payload["speller"] = self.speller
         if self.band_power is not None:
             payload["band_power"] = [round(v, 4) for v in self.band_power]
+        if self.raw is not None:
+            payload["raw"] = self.raw
         return payload
 
 

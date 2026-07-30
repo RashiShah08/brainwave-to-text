@@ -127,8 +127,8 @@
   <!-- Bottom: live signal and the decision log, side by side. -->
   <div class="traces">
     <div class="panel-head">
-      <span>Band power &mdash; motor channels</span>
-      <b id="scope-note">64 ch &middot; 8&ndash;30 Hz</b>
+      <span>Signal &mdash; motor strip</span>
+      <b id="scope-note">waiting for a recording</b>
     </div>
     <canvas id="scope"></canvas>
   </div>
@@ -167,7 +167,6 @@ window.neuralWorld.then((env) => {
   if (!env) { els.ovStatus.textContent = 'no webgl'; return; }
   env.setStage(document.getElementById('stage'));
   buildKeyed(env);
-  scope.init(env.electrodes);
 });
 
 // ---- structure table ------------------------------------------------------
@@ -209,40 +208,46 @@ addEventListener('brain:select', (e) => {
 const scope = (() => {
   const cv = document.getElementById('scope');
   const ctx = cv.getContext('2d');
-  const KEEP = 320;
-  let picks = [];
+  const SECONDS = 6;                  // sweep length, as a recorder's paper
   let names = [];
   let ring = [];
   let head = 0;
   let filled = 0;
+  let keep = 960;
+  let sfreq = 160;
+  let scale = [];                     // per-channel µV at full deflection
 
-  function init(electrodes) {
-    // One spread of contacts per motor region, so the trace block reads as
-    // left / midline / right rather than as an arbitrary subset.
-    const want = ['left_motor', 'midline_motor', 'right_motor'];
-    picks = [];
-    for (const region of want) {
-      const inRegion = electrodes
-        .map((e, i) => ({ e, i }))
-        .filter((o) => o.e.region === region);
-      const stride = Math.max(1, Math.floor(inRegion.length / 3));
-      for (let k = 0; k < inRegion.length && picks.length < 9; k += stride) {
-        picks.push(inRegion[k].i);
-      }
-    }
-    if (!picks.length) picks = electrodes.slice(0, 8).map((_, i) => i);
-    names = picks.map((i) => electrodes[i].name || ('ch' + i));
-    ring = picks.map(() => new Float32Array(KEEP).fill(0.5));
+  function init(trace) {
+    names = trace.channels;
+    sfreq = trace.sfreq || 160;
+    keep = Math.max(64, Math.round(sfreq * SECONDS));
+    ring = names.map(() => new Float32Array(keep));
+    scale = names.map(() => 40);
     head = 0; filled = 0;
+    document.getElementById('scope-note').textContent =
+      names.length + ' ch · ' + sfreq.toFixed(0) + ' Hz · ' + SECONDS + ' s';
     resize();
-    draw();
   }
 
-  function push(power) {
-    if (!picks.length || !power) return;
-    picks.forEach((ch, r) => { ring[r][head] = power[ch]; });
-    head = (head + 1) % KEEP;
-    filled = Math.min(KEEP, filled + 1);
+  /** One step's worth of real samples, per channel. */
+  function push(block) {
+    if (!ring.length || !block) return;
+    const n = block[0].length;
+    for (let r = 0; r < ring.length && r < block.length; r++) {
+      const row = block[r];
+      const buf = ring[r];
+      let peak = 0;
+      for (let k = 0; k < n; k++) {
+        buf[(head + k) % keep] = row[k];
+        const a = Math.abs(row[k]);
+        if (a > peak) peak = a;
+      }
+      // Track the deflection slowly, so the gain does not jump about between
+      // steps the way a per-block normalisation would.
+      scale[r] = Math.max(8, scale[r] * 0.92 + peak * 1.25 * 0.08);
+    }
+    head = (head + n) % keep;
+    filled = Math.min(keep, filled + n);
     draw();
   }
 
@@ -260,10 +265,10 @@ const scope = (() => {
     const w = cv.clientWidth || 900;
     const h = cv.clientHeight || 150;
     ctx.clearRect(0, 0, w, h);
-    if (!picks.length) return;
+    if (!ring.length) return;
 
     const gutter = 44;
-    const rows = picks.length;
+    const rows = ring.length;
     const band = h / rows;
     const css = getComputedStyle(document.documentElement);
     const line = css.getPropertyValue('--line').trim() || '#1d222a';
@@ -286,16 +291,22 @@ const scope = (() => {
       ctx.fillText(names[r], 8, y0 + band / 2);
 
       ctx.strokeStyle = ink;
+      ctx.lineWidth = 0.9;
       ctx.beginPath();
       const buf = ring[r];
       const span = w - gutter;
-      for (let k = 0; k < filled; k++) {
-        // Anchored to the right edge: a chart recorder writes at the pen and
-        // pushes history leftward, so the newest sample must not drift.
-        const idx = (head - filled + k + KEEP * 2) % KEEP;
-        const x = gutter + span - (span * (filled - 1 - k)) / Math.max(1, KEEP - 1);
-        const v = Math.max(0, Math.min(1, buf[idx]));
-        const y = y0 + band - 2 - v * (band - 4);
+      const mid = y0 + band / 2;
+      const amp = (band - 6) / 2;
+      const gain = amp / scale[r];
+      // One vertical pixel column per sample would be wasteful and illegible;
+      // step so the sweep is drawn at roughly screen resolution.
+      const stride = Math.max(1, Math.floor(keep / Math.max(1, span)));
+      for (let k = 0; k < filled; k += stride) {
+        // Anchored to the right edge: a recorder writes at the pen and pushes
+        // history leftward, so the newest sample must not drift.
+        const idx = (head - filled + k + keep * 2) % keep;
+        const x = gutter + span - (span * (filled - 1 - k)) / Math.max(1, keep - 1);
+        const y = Math.max(y0 + 2, Math.min(y0 + band - 2, mid - buf[idx] * gain));
         if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       }
       ctx.stroke();
@@ -309,7 +320,10 @@ const scope = (() => {
   }
 
   addEventListener('resize', resize, { passive: true });
-  return { init, push, resize, reset() { ring.forEach((b) => b.fill(0.5)); head = 0; filled = 0; draw(); } };
+  return {
+    init, push, resize,
+    reset() { ring.forEach((b) => b.fill(0)); head = 0; filled = 0; draw(); },
+  };
 })();
 
 // ---- file picking ---------------------------------------------------------
@@ -369,6 +383,7 @@ function addLogRow() { /* log lives in the decision table below */ }
 function handle(msg) {
   if (msg.type === 'start') {
     buildBars(msg.classes, parseFloat(document.getElementById('threshold').value));
+    if (msg.trace) scope.init(msg.trace);
     els.ovStatus.textContent = 'decoding';
     els.ovStatus.classList.add('is-live');
     els.ovTag.textContent = 'decoding';
@@ -393,7 +408,7 @@ function handle(msg) {
 
   if (scene && msg.band_power) scene.update(msg.band_power);
   if (scene) scene.posterior(msg.posterior);
-  if (msg.band_power) scope.push(msg.band_power);
+  if (msg.raw) scope.push(msg.raw.samples);
 
   Object.keys(msg.posterior).forEach((c) => {
     const p = msg.posterior[c];
@@ -487,6 +502,7 @@ els.form.addEventListener('submit', (ev) => {
     step: document.getElementById('step').value,
     threshold: document.getElementById('threshold').value,
     band_power: '1',
+    raw: '1',
   });
 
   controller = new AbortController();
