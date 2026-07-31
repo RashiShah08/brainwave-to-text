@@ -8,6 +8,15 @@
   <title>{% block title %}Brainwave decoder{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}" />
 
+  {% if request.endpoint != 'live' %}
+  {# Warm the specimen from the document pages. It is the only heavy asset on
+     the site, and fetching it here is what makes the first crossing to the
+     live view land on a built scene instead of an empty stage. #}
+  <link rel="prefetch" href="{{ url_for('static', filename='cortex.bin') }}" as="fetch" />
+  <link rel="prefetch" href="{{ url_for('static', filename='brain3d.js') }}" as="script" />
+  <link rel="prefetch" href="/api/v1/geometry" as="fetch" />
+  {% endif %}
+
   <!-- Must run before any page script: module scripts execute in document
        order, and content blocks sit above the end of <body>. -->
   <script type="module">
@@ -70,6 +79,7 @@
            {% if section == 'file' %}aria-current="page"{% endif %}>Decode file</a>
         <a class="navlink" href="{{ url_for('live') }}"
            {% if section == 'live' %}aria-current="page"{% endif %}>Live</a>
+        <span class="navmark" aria-hidden="true"></span>
         {% if model %}
         <span class="pill">{{ model.task }}</span>
         <span class="pill">{{ model.pipeline }}</span>
@@ -115,6 +125,69 @@
       });
       window.neuralWorld.then(function (env) {
         if (env) env.setCalloutEl(card);
+      });
+    }());
+  </script>
+  <!-- Navigation between the two pages. The exit is animated here rather than
+       through the cross-document View Transition API, which left the incoming
+       document frozen with no frame ever produced. -->
+  <script>
+    (function () {
+      var nav = document.querySelector('.topbar-meta');
+      var mark = nav && nav.querySelector('.navmark');
+      var links = nav ? [].slice.call(nav.querySelectorAll('.navlink')) : [];
+      if (!mark || !links.length) return;
+      nav.classList.add('has-navmark');
+
+      var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      // Long enough to read as a movement, short enough that nobody waits for
+      // it, and slightly longer than the marker's own slide so the marker has
+      // landed by the time the page is swapped. The document is prefetched, so
+      // this is the only cost a navigation carries.
+      var EXIT_MS = reduced ? 0 : 215;
+
+      function place(link, animate) {
+        if (!link) return;
+        mark.classList.toggle('is-moving', !!animate && !reduced);
+        // Measured against the nav rather than the page: the bar's contents
+        // shift with the model pills, and a hard-coded offset would drift.
+        var l = link.getBoundingClientRect();
+        var n = nav.getBoundingClientRect();
+        mark.style.width = (l.width + 4) + 'px';
+        mark.style.transform = 'translateX(' + ((l.left - n.left) - 2) + 'px)';
+        mark.classList.add('is-placed');
+      }
+
+      var current = links.filter(function (a) {
+        return a.hasAttribute('aria-current');
+      })[0];
+      place(current, false);
+      // Fonts land after first paint and change the link's width, so the
+      // marker is measured again once they have.
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(function () { place(current, false); });
+      }
+      addEventListener('resize', function () { place(current, false); },
+                       { passive: true });
+      // Restoring from the back/forward cache leaves the exit state applied,
+      // which would show an empty page.
+      addEventListener('pageshow', function () {
+        document.documentElement.removeAttribute('data-leaving');
+      });
+
+      links.forEach(function (link) {
+        link.addEventListener('click', function (e) {
+          if (e.defaultPrevented || e.button !== 0
+              || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+          if (link === current) { e.preventDefault(); return; }
+          e.preventDefault();
+          place(link, true);
+          document.documentElement.setAttribute('data-leaving', '1');
+          var href = link.href;
+          var went = false;
+          var go = function () { if (!went) { went = true; location.href = href; } };
+          setTimeout(go, EXIT_MS);
+        });
       });
     }());
   </script>
