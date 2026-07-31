@@ -62,9 +62,14 @@
         <span class="brand-mark" aria-hidden="true"></span>
         <span>Cortical decoder</span>
       </a>
+      {# The result page is reached by submitting the decode form, so it counts
+         as that section rather than as nowhere. #}
+      {% set section = 'live' if request.endpoint == 'live' else 'file' %}
       <nav class="topbar-meta">
-        <a class="navlink" href="{{ url_for('index') }}">Decode file</a>
-        <a class="navlink" href="{{ url_for('live') }}">Live</a>
+        <a class="navlink" href="{{ url_for('index') }}"
+           {% if section == 'file' %}aria-current="page"{% endif %}>Decode file</a>
+        <a class="navlink" href="{{ url_for('live') }}"
+           {% if section == 'live' %}aria-current="page"{% endif %}>Live</a>
         {% if model %}
         <span class="pill">{{ model.task }}</span>
         <span class="pill">{{ model.pipeline }}</span>

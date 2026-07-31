@@ -78,10 +78,22 @@ a:hover { color: var(--fg); }
 }
 .topbar-meta { display: flex; align-items: center; gap: 16px; }
 .navlink {
+  position: relative;
+  display: inline-block; padding-bottom: 5px;
   font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.12em;
   text-transform: uppercase; color: var(--fg-3);
 }
 .navlink:hover { color: var(--fg); }
+
+/* The page you are on: full-brightness label over a lit rule. The rule hangs
+   off the text rather than off the bar -- the links are centred in a 40px bar,
+   so a rule pinned to the link box lands below the bar entirely. No leading
+   dot either: between two links set 16px apart it reads as a separator. */
+.navlink[aria-current='page'] { color: var(--fg); }
+.navlink[aria-current='page']::after {
+  content: ''; position: absolute; left: -2px; right: -2px; bottom: 0;
+  height: 2px; background: var(--accent);
+}
 .pill {
   font-family: var(--mono); font-size: 10.5px; color: var(--fg-2);
   padding: 2px 7px; border: 1px solid var(--line-2); white-space: nowrap;
@@ -418,7 +430,10 @@ input[type="file"] { display: none; }
 /* ── document pages ──────────────────────────────────────────────────── */
 
 body.doc { overflow: auto; }
-body.doc .wrap { width: min(1180px, 100% - 44px); margin: 0 auto; padding: 30px 0 40px; }
+/* The title bar has a .wrap of its own, so this must not reach it: the page
+   measure and its 30/40px padding made the bar's inner row 70px tall inside a
+   40px bar, pushing the nav out through the bottom edge. */
+body.doc main.wrap { width: min(1180px, 100% - 44px); margin: 0 auto; padding: 30px 0 40px; }
 
 body.doc h1 {
   font-size: 23px; font-weight: 500; margin: 0 0 7px; letter-spacing: -0.012em;
