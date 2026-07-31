@@ -252,8 +252,15 @@ html[data-world="off"] .hint::after { content: " — no webgl"; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .tbl tr:last-child td { border-bottom: 0; }
-.tbl tbody tr { cursor: pointer; }
 .tbl tbody tr:hover td { background: var(--panel-2); color: var(--fg); }
+
+/* A site row names the contacts it averaged, so the level is checkable. */
+.tbl .site-n { display: block; color: var(--fg-2); }
+.tbl .site-ch {
+  display: block; margin-top: 1px;
+  font-size: 9px; font-style: normal; letter-spacing: 0.04em;
+  color: var(--fg-3);
+}
 .tbl tbody tr.is-on td { background: rgba(86, 182, 205, 0.11); color: var(--fg); }
 .tbl tbody tr.is-on td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
 .tbl .bar {

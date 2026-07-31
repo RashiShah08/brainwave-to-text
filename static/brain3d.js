@@ -385,6 +385,11 @@ export class NeuralEnvironment {
     this.power = new Float32Array(this.n).fill(0.42);
     this.target = new Float32Array(this.n).fill(0.42);
     this.vis = new Float32Array(this.n).fill(0.42);
+    // False until a recording has actually delivered band power. Everything
+    // reported to the interface is suppressed while this is false: an idle
+    // instrument must not print numbers, because a number on screen reads as
+    // a measurement whether or not anything was measured.
+    this.measured = false;
 
     this.flashAmount = 0;
     this.flashRegion = -1;
@@ -994,6 +999,47 @@ export class NeuralEnvironment {
     return this.regionCount[id] > 0;
   }
 
+  /**
+   * The electrode groups the interface may report levels for, in display
+   * order. These are montage groups -- real contacts with real names -- not
+   * anatomical structures. Scalp EEG does not resolve to a structure, so a
+   * level is only ever attributed to the electrodes that measured it.
+   */
+  siteGroups() {
+    if (this._groups) return this._groups;
+    const order = ['left_motor', 'right_motor', 'midline_motor', 'other'];
+    const title = {
+      left_motor: 'Left sensorimotor',
+      right_motor: 'Right sensorimotor',
+      midline_motor: 'Midline',
+      other: 'All other sites',
+    };
+    const byRegion = new Map(order.map((k) => [k, []]));
+    this.electrodes.forEach((e, i) => {
+      const bucket = byRegion.get(e.region) || byRegion.get('other');
+      bucket.push({ i, name: e.name });
+    });
+    this._groups = order
+      .filter((k) => byRegion.get(k).length > 0)
+      .map((k) => ({
+        key: k,
+        name: title[k],
+        members: byRegion.get(k),
+        channels: byRegion.get(k).map((m) => m.name),
+      }));
+    return this._groups;
+  }
+
+  /** Mean normalised mu/beta per electrode group, or null if nothing measured. */
+  siteLevels() {
+    if (!this.measured) return null;
+    return this.siteGroups().map((g) => {
+      let sum = 0;
+      for (const m of g.members) sum += this.vis[m.i];
+      return sum / g.members.length;
+    });
+  }
+
   /** The callout overlay: an SVG leader plus the label that terminates it. */
   setCalloutEl(el) {
     this.calloutEl = el || null;
@@ -1063,39 +1109,64 @@ export class NeuralEnvironment {
   update(bandPower) {
     if (!bandPower || bandPower.length !== this.n) return;
     for (let i = 0; i < this.n; i++) this.target[i] = bandPower[i];
-  }
-
-  flash(label) {
-    this.flashSide = NeuralEnvironment.region(label);
-    this.flashRegion = SITE_TO_REGION[this.flashSide];
-    this.flashAmount = 1;
-  }
-
-  /** Live posterior, warming the hemisphere that would produce each class. */
-  posterior(map) {
-    if (!map) return;
-    this.wash.fill(0);
-    for (const [label, p] of Object.entries(map)) {
-      const r = SITE_TO_REGION[NeuralEnvironment.region(label)];
-      // An even split should read as neutral, not as overall brightness.
-      this.wash[r] = Math.max(this.wash[r], Math.max(0, p - 0.5) * 2);
-    }
+    this.measured = true;
   }
 
   /**
-   * A committed decision. The responding structure lights and *stays* lit
-   * until the next one replaces it — markers standing off the surface were
-   * invisible until the specimen was turned, and the anatomy itself is the
-   * clearer place to say where a decision landed.
+   * Retained so the page can keep calling it, but it no longer paints.
+   *
+   * This used to warm a hemisphere in proportion to the running posterior, by
+   * mapping each class through the contralateral rule. That drew a conclusion
+   * about the brain from the classifier's belief rather than from any
+   * measurement, which is exactly backwards -- the picture would have shown a
+   * confident hemisphere even if the electrodes over it had measured nothing.
+   * Only measured band power tints the surface now.
+   */
+  posterior() {
+    this.wash.fill(0);
+  }
+
+  /**
+   * Light the side that actually measured lower mu/beta, and report it.
+   *
+   * The previous behaviour applied the contralateral rule to the decoded label
+   * -- left_fist lights right motor cortex -- which is textbook physiology but
+   * is an inference about this trial that was never checked against this
+   * trial's data. What is lit now is what the electrodes measured: motor
+   * imagery suppresses the rhythm, so the lower group is the responding one.
+   * When the measurement disagrees with the expectation, the measurement wins
+   * and the interface says so.
    */
   commit(decision) {
-    if (!decision || decision.timed_out) return;
-    this.flash(decision.label);
+    if (!decision || decision.timed_out) return null;
+    const levels = this.siteLevels();
+    if (!levels) return null;
+    const groups = this.siteGroups();
+    const li = groups.findIndex((g) => g.key === 'left_motor');
+    const ri = groups.findIndex((g) => g.key === 'right_motor');
+    if (li < 0 || ri < 0) return null;
+
+    const diff = levels[li] - levels[ri];
+    // Below this the two sides are level to within display resolution, and
+    // naming a winner would be reading noise.
+    const DEADBAND = 0.02;
+    if (Math.abs(diff) < DEADBAND) {
+      this.flashSide = null;
+      this.flashRegion = -1;
+      this.flashAmount = 0;
+      return { side: null, left: levels[li], right: levels[ri], diff };
+    }
+    const side = diff < 0 ? 'left_motor' : 'right_motor';
+    this.flashSide = side;
+    this.flashRegion = SITE_TO_REGION[side];
+    this.flashAmount = 1;
+    return { side, left: levels[li], right: levels[ri], diff };
   }
 
   reset() {
     this.power.fill(0.42);
     this.target.fill(0.42);
+    this.measured = false;
     this.flashAmount = 0;
     this.flashRegion = -1;      // else the last run's answer stays lit
     this.flashSide = null;
@@ -1154,8 +1225,11 @@ export class NeuralEnvironment {
     for (let i = 0; i < this.n; i++) {
       this.power[i] += (this.target[i] - this.power[i]) * ease;
       const e = this.electrodes[i];
-      const v = Math.min(1, Math.max(0,
-        this.power[i] + 0.08 * Math.sin(t * 0.8 + e.y * 3.1 + e.x * 2.2)));
+      // No decorative term. A sine wave added here to keep the contacts alive
+      // also flowed into the structure table, so up to +-0.08 of a printed
+      // "measured" level was animation. The only thing that moves a contact
+      // now is the recording.
+      const v = Math.min(1, Math.max(0, this.power[i]));
       this.vis[i] = v;
       const lit = this.flashAmount > 0 && e.region === this.flashSide
         ? this.flashAmount : 0;
@@ -1181,9 +1255,10 @@ export class NeuralEnvironment {
     // -- region highlights --------------------------------------------------
     for (let r = 0; r < N_REGIONS; r++) {
       this.washEased[r] += (this.wash[r] - this.washEased[r]) * (1 - Math.exp(-dt * 3.5));
-      // Resting power sits near 0.42, so subtract it: a structure should only
-      // engrave harder when it is actually above its own baseline.
-      const live = Math.max(0, this.activity[r] - 0.44) * 1.5;
+      // 0.5 is the neutral point of the normaliser -- an electrode sitting at
+      // its own running average. Tint only above that, and only once something
+      // has actually been measured.
+      const live = this.measured ? Math.max(0, this.activity[r] - 0.5) * 1.5 : 0;
       let hi = Math.max(live * 0.42, this.washEased[r] * 0.34);
       // The committed structure holds a floor and pulses above it, so it is
       // still obvious which one answered a second after the pulse has gone.
@@ -1204,7 +1279,9 @@ export class NeuralEnvironment {
     this.reportIn -= dt;
     if (this.reportIn <= 0 && this.onActivity) {
       this.reportIn = 0.12;
-      this.onActivity(this.activity, this.selected);
+      // siteLevels() is null until a recording has delivered band power, so an
+      // idle instrument reports nothing rather than a resting placeholder.
+      this.onActivity(this.siteLevels(), this.selected);
     }
 
 
