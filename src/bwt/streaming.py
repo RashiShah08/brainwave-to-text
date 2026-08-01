@@ -1,7 +1,7 @@
 """Continuous decoding with evidence accumulation.
 
 A single 3-second trial is decoded at roughly 61% accuracy, which is far too
-unreliable to drive a speller: five consecutive decisions at that rate land on
+unreliable to act on directly: five consecutive decisions at that rate land on
 the intended character about a tenth of the time. The standard fix is not a
 better classifier but a better *decision rule* -- keep decoding overlapping
 windows and accumulate the evidence until it is decisive, then commit.
@@ -188,7 +188,6 @@ class StreamEvent:
     top_label: str
     posterior: dict[str, float]
     decision: Decision | None = None
-    speller: dict | None = None
     #: Per-electrode mu/beta power for this window, normalised to roughly
     #: [0, 1] against a running baseline. Present only when the caller asks for
     #: it, since it costs a filter pass per window.
@@ -208,8 +207,6 @@ class StreamEvent:
         }
         if self.decision is not None:
             payload["decision"] = self.decision.to_dict()
-        if self.speller is not None:
-            payload["speller"] = self.speller
         if self.band_power is not None:
             payload["band_power"] = [round(v, 4) for v in self.band_power]
         if self.raw is not None:
@@ -305,7 +302,6 @@ class StreamingDecoder:
         max_windows: int = 40,
         min_windows: int = 2,
         leak: float = 0.95,
-        speller=None,
     ):
         self.predictor = predictor
         self.classes = list(predictor.card.classes)
@@ -313,15 +309,12 @@ class StreamingDecoder:
             self.classes, threshold=threshold, max_windows=max_windows,
             min_windows=min_windows, leak=leak,
         )
-        self.speller = speller
 
     def run(self, stream: EDFStream,
             on_event: Callable[[StreamEvent], None] | None = None
             ) -> list[StreamEvent]:
         """Consume a stream, returning every event produced."""
         events: list[StreamEvent] = []
-        commands: list[str] = []
-        confidences: list[float] = []
         self.accumulator.reset()
 
         for window in stream:
@@ -342,11 +335,6 @@ class StreamingDecoder:
             )
 
             if decision is not None:
-                if decision.label is not None and self.speller is not None:
-                    commands.append(decision.label)
-                    confidences.append(decision.confidence)
-                    result = self.speller.decode(commands, confidences)
-                    event.speller = result.to_dict()
                 self.accumulator.reset()
 
             events.append(event)
@@ -356,7 +344,7 @@ class StreamingDecoder:
         return events
 
 
-def simulate_speller_throughput(
+def simulate_accumulation_throughput(
     accuracy: float, n_classes: int, seconds_per_window: float,
     *, threshold: float = 0.9, max_windows: int = 40,
     n_trials: int = 2000, random_state: int = 0,
@@ -550,5 +538,5 @@ __all__ = [
     "StreamingDecoder",
     "channel_band_power",
     "evaluate_accumulation",
-    "simulate_speller_throughput",
+    "simulate_accumulation_throughput",
 ]

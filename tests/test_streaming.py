@@ -9,7 +9,7 @@ from bwt.streaming import (
     EDFStream,
     EvidenceAccumulator,
     evaluate_accumulation,
-    simulate_speller_throughput,
+    simulate_accumulation_throughput,
 )
 
 
@@ -138,21 +138,21 @@ class TestEDFStream:
 
 class TestThroughputSimulation:
     def test_accumulation_beats_single_window(self):
-        result = simulate_speller_throughput(0.61, 2, 0.5, threshold=0.9,
+        result = simulate_accumulation_throughput(0.61, 2, 0.5, threshold=0.9,
                                              n_trials=800)
         assert result["decision_accuracy"] > 0.61
 
     def test_higher_threshold_costs_time(self):
-        fast = simulate_speller_throughput(0.65, 2, 0.5, threshold=0.75,
+        fast = simulate_accumulation_throughput(0.65, 2, 0.5, threshold=0.75,
                                            n_trials=800)
-        careful = simulate_speller_throughput(0.65, 2, 0.5, threshold=0.99,
+        careful = simulate_accumulation_throughput(0.65, 2, 0.5, threshold=0.99,
                                               n_trials=800)
         assert (careful["mean_windows_per_decision"]
                 > fast["mean_windows_per_decision"])
         assert careful["decision_accuracy"] >= fast["decision_accuracy"]
 
     def test_chance_input_gives_no_throughput(self):
-        result = simulate_speller_throughput(0.5, 2, 0.5, threshold=0.9,
+        result = simulate_accumulation_throughput(0.5, 2, 0.5, threshold=0.9,
                                              max_windows=10, n_trials=400)
         assert result["decision_accuracy"] < 0.65
 

@@ -278,7 +278,7 @@ TASKS: dict[str, TaskSpec] = {
         },
         classes=("both_fists", "both_feet"),
     ),
-    # Four imagined classes. This is what drives the 4-ary speller.
+    # Four imagined classes: the standard benchmark on this dataset.
     "mi_four_class": TaskSpec(
         name="mi_four_class",
         description=(
@@ -294,11 +294,11 @@ TASKS: dict[str, TaskSpec] = {
         },
         classes=("left_fist", "right_fist", "both_fists", "both_feet"),
     ),
-    # Asynchronous BCI gate: is the user attempting anything at all? A speller
-    # that runs continuously needs this, otherwise it emits a letter every time
-    # the user blinks or looks away. Here the merge across effectors is the
-    # point -- the positive class is "any imagined movement" -- which is why
-    # this is the one task allowed to set `merges_effectors`.
+    # Asynchronous BCI gate: is the user attempting anything at all? A decoder
+    # that runs continuously needs this, otherwise it commits to a movement
+    # every time the user blinks or looks away. Here the merge across effectors
+    # is the point -- the positive class is "any imagined movement" -- which is
+    # why this is the one task allowed to set `merges_effectors`.
     "mi_move_vs_rest": TaskSpec(
         name="mi_move_vs_rest",
         description=(

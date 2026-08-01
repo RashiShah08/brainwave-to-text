@@ -34,7 +34,12 @@ serve:
   port: 5000
   max_upload_mb: 64
   # Artifact directory name under artifacts/, or null for the most recent.
-  model: null
+  # Pinned rather than null: with several tasks trained, "most recent" means
+  # whichever was trained last decides what the site serves, which is a
+  # training-order accident rather than a decision. Alternatives on disk are
+  # mi_fists_feet__csp_lda (68.9% within-subject, the strongest two-class) and
+  # mi_four_class__csp_lda (51.1% against 25% chance).
+  model: mi_left_right__csp_lda
   max_epochs_per_request: 256
   # Refuse to load a model trained against different library versions.
   strict_versions: false

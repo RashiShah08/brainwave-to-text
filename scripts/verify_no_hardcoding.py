@@ -27,7 +27,11 @@ def check(name, ok, detail=""):
 
 from bwt.serving.predictor import Predictor  # noqa: E402
 
-predictor = Predictor.load()
+# Load whatever the server is actually serving, not whichever artifact happens
+# to be newest on disk. With several tasks trained those differ, and comparing
+# a served response against a different model's estimator proves nothing.
+served_name = requests.get(f"{BASE}/healthz", timeout=30).json()["model"]
+predictor = Predictor.load(served_name)
 card = predictor.card
 print(f"\nmodel   : {predictor.name}")
 print(f"classes : {card.classes}")

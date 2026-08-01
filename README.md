@@ -1,20 +1,23 @@
-# Brainwave-to-Text
+# EEG motor-imagery decoder
 
-An EEG motor-imagery decoder and mental-command speller, built on the PhysioNet
-EEG Motor Movement/Imagery Database (EEGMMIDB) and BCI Competition IV-2a.
+Built on the PhysioNet EEG Motor Movement/Imagery Database (EEGMMIDB) and BCI
+Competition IV-2a.
 
-The system classifies **imagined movements** from scalp EEG and uses the
-resulting sequence of discrete commands to drive a spelling interface. It offers
-classical (CSP, Riemannian) and neural (EEGNet, ShallowConvNet, EEG-Conformer)
-decoders behind one interface, per-user calibration, continuous decoding with
-evidence accumulation, and tools to check that the model is using real
-sensorimotor physiology rather than artifacts.
+The system classifies **imagined movements** from scalp EEG. It offers classical
+(CSP, Riemannian) and neural (EEGNet, ShallowConvNet, EEG-Conformer) decoders
+behind one interface, per-user calibration, continuous decoding with evidence
+accumulation, and tools to check that the model is using real sensorimotor
+physiology rather than artifacts.
 
 > **What this is not.** It does not read words, inner speech, or intent from the
-> brain. No scalp-EEG system does. What a motor-imagery BCI can deliver is a few
-> discrete commands per trial; text comes from using those commands to navigate a
-> character-selection interface, which is how real assistive spellers work. Every
-> throughput number below is stated in those terms.
+> brain. No scalp-EEG system does. The output is *which movement was imagined*,
+> and nothing else.
+>
+> Earlier versions drove a character-selection interface with the decoded
+> commands, which is how real assistive spellers work. That has been removed.
+> The spelling was a selection interface bolted onto the classifier rather than
+> anything decoded from the signal, and putting letters on screen next to a
+> brain invited precisely the reading the paragraph above denies.
 
 ---
 
@@ -193,17 +196,16 @@ model, where a single trial scores 0.611:
 | 0.99 | **0.707** | 12.8 | 72% |
 
 **This is much weaker than an idealised simulation suggests, and that gap is the
-point.** `simulate_speller_throughput`, which assumes independent draws, predicts
-0.99+ decision accuracy from the same 0.611 decoder. Reality gives 0.707, because
-a subject's errors are correlated: for someone the model cannot decode, gathering
-more evidence yields a *confidently wrong* answer rather than a correct one. At
-the strictest threshold, 28% of sequences never commit at all.
+point.** `simulate_accumulation_throughput`, which assumes independent draws,
+predicts 0.99+ decision accuracy from the same 0.611 decoder. Reality gives
+0.707, because a subject's errors are correlated: for someone the model cannot
+decode, gathering more evidence yields a *confidently wrong* answer rather than
+a correct one. At the strictest threshold, 28% of sequences never commit at all.
 
-What that means for spelling, stated plainly: at 0.707 per decision and five
-decisions per character, the intended character is selected about 18% of the
-time, and each attempt costs roughly 12.8 × 5 ≈ 64 trials. Evidence accumulation
-is a real and worthwhile improvement, but **it does not turn this into a usable
-speller.**
+Stated plainly: a decision you can trust roughly seven times in ten, at eight to
+thirteen windows apiece. Evidence accumulation is a real and worthwhile
+improvement over a single window, and it is still a long way from a control
+signal anyone would want to rely on.
 
 Two caveats, both enforced in the code:
 
@@ -214,7 +216,7 @@ Two caveats, both enforced in the code:
   share most of their samples and therefore share their errors, so accumulation
   makes the decoder *confident* rather than *correct*. You can watch this happen
   on the `/live` page: a subject the model is biased on will produce a long run
-  of the same confident-but-wrong decision. `simulate_speller_throughput`
+  of the same confident-but-wrong decision. `simulate_accumulation_throughput`
   documents its independence assumption and should be read as an upper bound.
 
 ### The same code on a different lab's data
@@ -385,7 +387,7 @@ src/bwt/
   streaming.py      sliding-window decoding, evidence accumulation
   explain.py        ERD curves, CSP topographies, lateralisation index
   artifacts.py      versioned persistence with a model card
-  decoding.py       mental-command -> text speller, ITR metrics
+  metrics.py        information transfer rate
   serving/          Flask app, predictor, live streaming endpoint
   cli.py            bwt entry point
 ```
@@ -497,7 +499,7 @@ Common flags: `--dataset`, `--subjects 1,2,5-9`, `--tmin/--tmax`, `--cv-splits`,
 | `POST /api/v1/predict` | Multipart `file=<recording.edf>` → JSON predictions |
 | `POST /api/v1/stream` | Same, but streams newline-delimited JSON per window |
 | `GET /` , `POST /predict` | Browser UI |
-| `GET /live` | Live decoder with evidence bars and a running speller |
+| `GET /live` | Live decoder: cortex, evidence accumulation, real EEG traces |
 
 ```bash
 curl -F file=@raw_data/S001/S001R04.edf http://127.0.0.1:5000/api/v1/predict
@@ -564,9 +566,9 @@ so a GPU-trained artifact loads anywhere.
 
 - **Accuracy is modest and highly variable between people.** This is the
   paradigm, not the implementation.
-- **The speller is a demonstrator.** Evidence accumulation makes it far more
-  usable, but at a real cost in time per character, and only for repeated
-  independent trials.
+- **Evidence accumulation buys accuracy with time.** It is a real improvement
+  over a single window, but it costs seconds per decision and only holds for
+  repeated independent trials.
 - **Cross-subject transfer is weak, and calibration did not fix it here.**
   Measured on EEGMMIDB, refitting per subject was worse than the population
   model and fine-tuning gained about a point, inside the noise. That is a

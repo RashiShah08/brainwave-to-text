@@ -113,12 +113,16 @@ class TestEdfIngestion:
         assert X.shape[1:] == (predictor.card.n_channels, predictor.card.n_times)
         assert len(onsets) == len(X)
 
-    def test_predicts_and_spells(self, predictor, synthetic_edf):
+    def test_predicts_movements_and_nothing_else(self, predictor, synthetic_edf):
         batch = predictor.predict_edf(synthetic_edf)
         assert batch.n > 0
         assert batch.epoching == "cue_locked"
         assert {p.label for p in batch.predictions} <= set(batch.classes)
-        assert batch.text is not None
+        # The output is which movement was imagined. There is no text, and no
+        # speller, and the response must not offer either.
+        payload = batch.to_dict()
+        assert "text" not in payload
+        assert "speller" not in payload
 
     def test_batch_serialises_to_json(self, predictor, synthetic_edf):
         payload = json.loads(json.dumps(predictor.predict_edf(synthetic_edf).to_dict()))
@@ -324,7 +328,7 @@ class TestRealDataEpochingParity:
 
         model, card = load_artifact(tmp_path / "parity")
         direct = model.predict(X)
-        served = predictor.predict_edf(path, spell=False)
+        served = predictor.predict_edf(path)
         via_service = np.array(
             [card.classes.index(p.label) for p in served.predictions]
         )

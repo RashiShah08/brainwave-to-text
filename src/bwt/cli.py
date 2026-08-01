@@ -321,7 +321,7 @@ def cmd_predict(args) -> int:
     from bwt.serving.predictor import Predictor
 
     predictor = Predictor.load(args.model)
-    batch = predictor.predict_edf(Path(args.file), spell=not args.no_spell)
+    batch = predictor.predict_edf(Path(args.file))
 
     if args.json:
         print(json.dumps(
@@ -344,9 +344,6 @@ def cmd_predict(args) -> int:
         print(f"  ... {batch.n - args.limit} more")
     print(f"\nmajority  : {batch.majority_label()} "
           f"(mean confidence {batch.mean_confidence():.3f})")
-    if batch.text is not None:
-        print(f"spelled   : {batch.text!r} "
-              f"({batch.speller['trials_per_character']} trials/character)")
     return 0
 
 
@@ -443,7 +440,6 @@ def cmd_stream(args) -> int:
     print()
 
     decisions = timeouts = 0
-    text = ""
     for event in decoder.run(stream):
         if event.decision is None:
             continue
@@ -456,11 +452,8 @@ def cmd_stream(args) -> int:
             decisions += 1
             print(f"  t={event.onset_seconds:7.2f}s  {decision.label:12s} "
                   f"p={decision.confidence:.3f} after {decision.n_windows} windows")
-        if event.speller:
-            text = event.speller["text"]
 
     print(f"\ndecisions: {decisions} committed, {timeouts} timed out")
-    print(f"spelled  : {text!r}")
     return 0
 
 
@@ -559,7 +552,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         prog="bwt",
-        description="Brainwave-to-Text: EEG motor-imagery decoding and spelling",
+        description="An EEG motor-imagery decoder: which imagined movement, and nothing else",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=f"bwt {__version__}")
@@ -633,7 +626,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("file")
     p.add_argument("--model", default=None, help="artifact name or path")
     p.add_argument("--json", action="store_true")
-    p.add_argument("--no-spell", action="store_true")
     p.add_argument("--limit", type=int, default=20)
     p.set_defaults(func=cmd_predict)
 

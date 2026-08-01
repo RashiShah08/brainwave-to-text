@@ -1,4 +1,4 @@
-"""Inference: EDF in, decoded commands and text out.
+"""Inference: EDF in, decoded commands out.
 
 The single most important property of this module is that it does **not**
 reimplement feature extraction. It reproduces the epoching contract recorded in
@@ -20,12 +20,8 @@ import numpy as np
 
 from bwt.artifacts import ModelCard, load_artifact, resolve_artifact
 from bwt.data.epochs import read_standardised_raw
-from bwt.decoding import (
-    expected_characters_per_minute,
-    information_transfer_rate,
-    make_speller,
-)
 from bwt.logging_utils import get_logger
+from bwt.metrics import information_transfer_rate
 
 log = get_logger(__name__)
 
@@ -67,8 +63,6 @@ class PredictionBatch:
     task: str
     classes: list[str]
     epoching: str
-    text: str | None = None
-    speller: dict | None = None
     warnings: list[str] = field(default_factory=list)
 
     @property
@@ -98,8 +92,6 @@ class PredictionBatch:
             "majority_label": self.majority_label(),
             "mean_confidence": round(self.mean_confidence(), 4),
             "predictions": [p.to_dict() for p in self.predictions],
-            "text": self.text,
-            "speller": self.speller,
             "warnings": self.warnings,
         }
 
@@ -113,7 +105,6 @@ class Predictor:
         self.card = card
         self.name = name
         self.max_epochs = max_epochs
-        self.speller = make_speller(card.classes)
 
     # -- construction ----------------------------------------------------- #
 
@@ -275,7 +266,7 @@ class Predictor:
 
         return (np.stack(kept).astype(np.float32), kept_onsets, mode, warnings_out)
 
-    def predict_edf(self, path: Path, *, spell: bool = True) -> PredictionBatch:
+    def predict_edf(self, path: Path) -> PredictionBatch:
         X, onsets, mode, warnings_out = self.epochs_from_edf(Path(path))
 
         if self.card.requires_batch_recentering and len(X) < 8:
@@ -295,15 +286,6 @@ class Predictor:
             epoching=mode,
             warnings=warnings_out,
         )
-
-        if spell and predictions:
-            result = self.speller.decode(
-                [p.label for p in predictions],
-                [p.confidence for p in predictions],
-            )
-            batch.text = result.text
-            batch.speller = result.to_dict()
-
         return batch
 
     # -- streaming ---------------------------------------------------------- #
@@ -328,7 +310,7 @@ class Predictor:
 
         return StreamingDecoder(
             self, threshold=threshold, max_windows=max_windows,
-            min_windows=min_windows, leak=leak, speller=self.speller,
+            min_windows=min_windows, leak=leak,
         )
 
     # -- reporting --------------------------------------------------------- #
@@ -348,13 +330,6 @@ class Predictor:
             "itr_bits_per_minute": round(
                 information_transfer_rate(accuracy, n_classes, trial_seconds), 2
             ),
-            "characters_per_minute": round(
-                expected_characters_per_minute(
-                    accuracy, n_classes, trial_seconds,
-                    len(self.speller.alphabet),
-                ), 2,
-            ),
-            "trials_per_character": self.speller.depth,
         }
 
 

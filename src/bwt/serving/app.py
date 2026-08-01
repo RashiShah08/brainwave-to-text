@@ -317,8 +317,6 @@ def _iter_events(decoder, stream, *, with_band_power: bool = False,
     from bwt.streaming import BandPowerNormaliser, StreamEvent, channel_band_power
 
     classes = decoder.classes
-    commands: list[str] = []
-    confidences: list[float] = []
     decoder.accumulator.reset()
 
     normalise = (
@@ -353,12 +351,6 @@ def _iter_events(decoder, stream, *, with_band_power: bool = False,
             }
 
         if decision is not None:
-            if decision.label is not None and decoder.speller is not None:
-                commands.append(decision.label)
-                confidences.append(decision.confidence)
-                event.speller = decoder.speller.decode(
-                    commands, confidences
-                ).to_dict()
             decoder.accumulator.reset()
         yield event
 
