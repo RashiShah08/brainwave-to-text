@@ -109,6 +109,35 @@ class Movement(str, Enum):
     EYES_CLOSED = "eyes_closed"
 
 
+#: Where the cue appeared on screen for each act, from the database protocol.
+#:
+#: This is what the subject was actually responding to, and therefore what a
+#: decoder is really recovering. The protocol reads: a target appears on the
+#: left or the right and the subject moves the corresponding fist; or a target
+#: appears at the top or the bottom and the subject moves both fists (top) or
+#: both feet (bottom). Naming the movement alone loses that the two-fist and
+#: two-feet classes were never a left/right question -- their cue varies on the
+#: vertical axis and nothing about them is lateral.
+#:
+#: Recorded here rather than in the interface so the mapping travels with the
+#: dataset definition and cannot drift away from the runs it describes.
+CUE_POSITION: dict[Movement, str] = {
+    Movement.LEFT_FIST: "left",
+    Movement.RIGHT_FIST: "right",
+    Movement.BOTH_FISTS: "top",
+    Movement.BOTH_FEET: "bottom",
+}
+
+#: The cue axis a pair of positions lives on. Left/right and top/bottom are
+#: different questions, not two namings of one.
+CUE_AXIS: dict[str, str] = {
+    "left": "horizontal",
+    "right": "horizontal",
+    "top": "vertical",
+    "bottom": "vertical",
+}
+
+
 @dataclass(frozen=True)
 class RunSpec:
     """What one run number means."""
@@ -229,6 +258,33 @@ class TaskSpec:
 
     def class_index(self, class_name: str) -> int:
         return self.classes.index(class_name)
+
+    @property
+    def cue_positions(self) -> dict[str, str]:
+        """Where the target appeared on screen for each class, when defined.
+
+        Classes that are not a single cued act -- ``rest``, or the merged
+        ``movement`` class of the asynchronous gate -- have no target position
+        and are simply absent.
+        """
+        out: dict[str, str] = {}
+        for movement, class_name in self.label_map.items():
+            position = CUE_POSITION.get(movement)
+            if position is None:
+                continue
+            # A class fed by several acts (the movement-vs-rest gate) has no
+            # single cue position, so it must not claim one.
+            if out.get(class_name, position) != position:
+                out.pop(class_name, None)
+                continue
+            out[class_name] = position
+        return {c: out[c] for c in self.classes if c in out}
+
+    @property
+    def cue_axes(self) -> list[str]:
+        """Which screen axes this task's cues vary on, in a stable order."""
+        seen = {CUE_AXIS[p] for p in self.cue_positions.values()}
+        return [a for a in ("horizontal", "vertical") if a in seen]
 
     def class_of(self, run: int, annotation: str) -> str | None:
         """Return the class name for an annotation in a run, or ``None`` to drop it."""

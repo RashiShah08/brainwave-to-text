@@ -88,7 +88,7 @@
       <div class="panel-body is-flush">
         <table class="log">
           <thead>
-            <tr><th class="num">#</th><th class="num">At</th><th>Command</th>
+            <tr><th class="num">#</th><th class="num">At</th><th>Movement</th>
                 <th class="num">Conf</th><th class="num">Win</th></tr>
           </thead>
           <tbody id="log">
@@ -117,7 +117,8 @@
       <div class="panel-body">
         <div id="bars"></div>
         <div class="rows" style="margin-top:10px">
-          <div class="row2"><span class="k">Last committed</span><span class="v is-alert" id="ld-class">&mdash;</span></div>
+          <div class="row2"><span class="k">Target</span><span class="v is-alert" id="ld-cue">&mdash;</span></div>
+          <div class="row2"><span class="k">Movement</span><span class="v" id="ld-class">&mdash;</span></div>
           <div class="row2"><span class="k">&mu;/&beta; lower over</span><span class="v" id="ld-site">&mdash;</span></div>
           <div class="row2"><span class="k">Contrast axis</span><span class="v" id="ph-axis">&mdash;</span></div>
         </div>
@@ -170,13 +171,14 @@
           </li>
           <li class="path-step" data-step="command">
             <span class="path-n">6</span>
-            <span class="path-t">Command<em>one movement, committed</em></span>
+            <span class="path-t">Target<em>which cue the subject responded to</em></span>
             <span class="path-v" id="pv-command">&mdash;</span>
           </li>
         </ol>
         <p class="path-foot">
-          The output is <b>which movement was imagined</b> &mdash; nothing more.
-          Scalp EEG carries no words, and this decodes none.
+          The output is <b>which target the subject was responding to</b>, and
+          the movement that implies &mdash; nothing more. Scalp EEG carries no
+          words, and this decodes none.
         </p>
       </div>
     </section>
@@ -222,6 +224,20 @@ let state = { decisions: 0, timeouts: 0, windowSum: 0, sinceDecision: 0 };
 // The loaded model's classes, so the specimen knows which axis this task
 // varies before a recording has been played.
 const MODEL_CLASSES = {{ model.classes | tojson }};
+
+// Where the target appeared on screen for each class. The subject was never
+// asked to produce a class name: a target appeared somewhere and they responded
+// to it, which is what the decoder is actually recovering -- BCI2000 records
+// precisely this as its TargetCode. Served with the model rather than assumed
+// here, so it cannot drift from the runs it describes.
+let CUE_POSITIONS = {{ cue_positions | tojson }};
+const CUE_ARROW = { left: '←', right: '→', top: '↑', bottom: '↓' };
+
+function cueText(label) {
+  const pos = CUE_POSITIONS[label];
+  if (!pos) return '—';
+  return (CUE_ARROW[pos] || '') + '  ' + pos;
+}
 
 window.neuralWorld.then((env) => {
   scene = env;
@@ -445,11 +461,18 @@ function setNum(id, v) { document.getElementById(id).textContent = v; }
 // axis the loaded task varies: left against right for a hand task, lateral
 // against midline for fists versus feet.
 function showDecision(label, measured) {
-  els.ovText.textContent = label;
+  // The headline is the target the subject was responding to, since that is
+  // the thing the recording was made to distinguish; the movement it implies
+  // follows it.
+  const pos = CUE_POSITIONS[label];
+  els.ovText.textContent = pos
+    ? (CUE_ARROW[pos] || '') + ' ' + pos + '  ·  ' + label
+    : label;
   els.ovText.classList.remove('pop');
   void els.ovText.offsetWidth;
   els.ovText.classList.add('pop');
   setNum('ld-class', label);
+  setNum('ld-cue', cueText(label));
   // Every axis the task varies is reported, not just the one the specimen
   // happened to light: a four-class task separates on two of them, and showing
   // one would quietly drop half of what was measured.
@@ -463,7 +486,7 @@ function showDecision(label, measured) {
     )).join('   ');
   }
   setNum('ld-site', site);
-  setNum('pv-command', label);
+  setNum('pv-command', pos ? (CUE_ARROW[pos] || '') + ' ' + pos : label);
   pulse('command');
 }
 
@@ -507,6 +530,7 @@ function handle(msg) {
     buildBars(msg.classes, parseFloat(document.getElementById('threshold').value));
     // The axis the specimen reports on follows the loaded task's classes, not
     // an assumption baked into the page.
+    CUE_POSITIONS = msg.cue_positions || {};
     if (scene) {
       document.getElementById('ph-axis').textContent =
         scene.setContrast(msg.classes).label;
@@ -603,6 +627,7 @@ els.form.addEventListener('submit', (ev) => {
   ['m-decisions', 'm-windows', 'm-timeouts'].forEach((i) => setNum(i, 0));
   setNum('m-mean', '—');
   setNum('ld-class', '—');
+  setNum('ld-cue', '—');
   setNum('ld-site', '—');
   ['pv-classify', 'pv-accum', 'pv-command'].forEach((i) => setNum(i, '—'));
   els.log.innerHTML = '<tr><td colspan="5" class="empty">none yet</td></tr>';

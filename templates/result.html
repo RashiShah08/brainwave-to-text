@@ -10,8 +10,9 @@
 {% else %}
   <h1>Decoded</h1>
   <p class="lede">
-    {{ batch.n }} epochs classified as one of
-    {{ batch.classes | join(' / ') }}.
+    {{ batch.n }} trials, each assigned the target the subject was responding
+    to &mdash; {{ cue_positions.values() | join(' or ') if cue_positions
+                  else batch.classes | join(' / ') }}.
   </p>
 
   {% if batch.epoching == 'sliding_window' %}
@@ -79,7 +80,8 @@
             {% if batch.predictions and batch.predictions[0].onset_seconds is not none %}
             <th class="num">Onset</th>
             {% endif %}
-            <th>Predicted</th>
+            <th>Target</th>
+            <th>Movement</th>
             <th class="num">Confidence</th>
             <th style="width:34%">Distribution</th>
           </tr>
@@ -91,7 +93,10 @@
             {% if p.onset_seconds is not none %}
             <td class="num">{{ '%.2f' % p.onset_seconds }}s</td>
             {% endif %}
-            <td>{{ p.label }}</td>
+            <td>{% set pos = cue_positions.get(p.label) %}{% if pos %}{{
+              {'left': '&larr;', 'right': '&rarr;', 'top': '&uarr;', 'bottom': '&darr;'}[pos] | safe
+            }} {{ pos }}{% else %}&mdash;{% endif %}</td>
+            <td class="dim">{{ p.label }}</td>
             <td class="num">{{ '%.3f' % p.confidence }}</td>
             <td>
               <span class="bar" title="{{ p.probabilities }}">

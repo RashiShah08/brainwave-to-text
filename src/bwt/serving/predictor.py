@@ -313,6 +313,34 @@ class Predictor:
             min_windows=min_windows, leak=leak,
         )
 
+    # -- the cue behind each class ----------------------------------------- #
+
+    @property
+    def cue_positions(self) -> dict[str, str]:
+        """Where the target appeared on screen for each class, when known.
+
+        The subject was not asked to produce a class name -- a target appeared
+        somewhere on the screen and they responded to it, which is what the
+        decoder is really recovering. BCI2000 records exactly this as its
+        ``TargetCode`` state variable. Empty for datasets whose protocol this
+        codebase does not describe.
+        """
+        try:
+            from bwt.data.physionet import TASKS
+        except Exception:
+            return {}
+        task = TASKS.get(self.card.task)
+        if task is None:
+            return {}
+        return {c: p for c, p in task.cue_positions.items() if c in self.card.classes}
+
+    @property
+    def cue_axes(self) -> list[str]:
+        from bwt.data.physionet import CUE_AXIS
+
+        seen = {CUE_AXIS[p] for p in self.cue_positions.values()}
+        return [a for a in ("horizontal", "vertical") if a in seen]
+
     # -- reporting --------------------------------------------------------- #
 
     def performance_note(self) -> dict:

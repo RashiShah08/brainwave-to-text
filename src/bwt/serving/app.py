@@ -133,6 +133,8 @@ def _register_routes(app: Flask) -> None:
             model=predictor.name,
             card=predictor.card.to_dict(),
             performance=predictor.performance_note(),
+            cue_positions=predictor.cue_positions,
+            cue_axes=predictor.cue_axes,
             input_contract={
                 "format": "EDF",
                 "sfreq_hz": predictor.card.sfreq,
@@ -153,6 +155,7 @@ def _register_routes(app: Flask) -> None:
             "upload.html",
             model=predictor.card,
             performance=predictor.performance_note(),
+            cue_positions=predictor.cue_positions,
         )
 
     @app.post("/predict")
@@ -172,6 +175,7 @@ def _register_routes(app: Flask) -> None:
             result=batch.to_dict(),
             model=predictor.card,
             performance=predictor.performance_note(),
+            cue_positions=predictor.cue_positions,
         )
 
     # -- JSON API ----------------------------------------------------------- #
@@ -195,6 +199,7 @@ def _register_routes(app: Flask) -> None:
             "live.html",
             model=predictor.card,
             performance=predictor.performance_note(),
+            cue_positions=predictor.cue_positions,
         )
 
     @app.post("/api/v1/stream")
@@ -240,6 +245,8 @@ def _register_routes(app: Flask) -> None:
                 start_payload = {
                     "type": "start",
                     "classes": list(predictor.card.classes),
+                    "cue_positions": predictor.cue_positions,
+                    "cue_axes": predictor.cue_axes,
                     "n_windows": min(total, config.serve.max_epochs_per_request),
                     "window_seconds": predictor.card.tmax - predictor.card.tmin,
                     "step_seconds": step,

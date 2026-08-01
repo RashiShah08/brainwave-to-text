@@ -147,10 +147,23 @@ with sync_playwright() as pw:
     check("result page states the measured accuracy", "60.6" in body_txt)
     check("result page separates confidence from correctness",
           "not" in body_txt.lower() and "confiden" in body_txt.lower())
-    rows = pg.eval_on_selector_all(
-        "table tbody tr", "rs => rs.map(r => [...r.cells].map(c => c.innerText))")
+    # Located by header rather than by index: the table gains and loses columns
+    # as the interface changes, and a positional assertion silently starts
+    # measuring the wrong thing.
+    table = pg.evaluate("""() => {
+      const t = document.querySelector('table');
+      const head = [...t.tHead.rows[0].cells].map(c => c.innerText.trim().toLowerCase());
+      const rows = [...t.tBodies[0].rows].map(r => [...r.cells].map(c => c.innerText.trim()));
+      return {head, rows};
+    }""")
+    ci = table["head"].index("confidence")
+    check("result table has a Target column", "target" in table["head"], str(table["head"]))
+    check("every target is a screen position",
+          all(r[table["head"].index("target")].split()[-1]
+              in {"left", "right", "top", "bottom"} for r in table["rows"]),
+          str(table["rows"][0]))
     check("every table confidence is a probability",
-          all(0.0 <= float(r[3]) <= 1.0 for r in rows if len(r) > 3), str(rows[0]))
+          all(0.0 <= float(r[ci]) <= 1.0 for r in table["rows"]), str(table["rows"][0]))
     check("result page marks Decode file as current",
           pg.eval_on_selector("[aria-current='page']", "e => e.innerText").strip().upper()
           == "DECODE FILE")
@@ -200,23 +213,28 @@ with sync_playwright() as pw:
     if hit:
         # The <aside> spans the viewport because it hosts the full-screen SVG
         # leader; measuring it proves nothing. The card is .callout-inner.
-        c = pg.eval_on_selector(".callout-inner", """e => {
-          const r = e.getBoundingClientRect();
+        # Card and leader are read in ONE evaluate. Two round trips can land
+        # either side of an animation frame, and the leader is re-aimed every
+        # frame -- a straddled read reports a card and a leader from different
+        # states and looks exactly like a disconnection bug.
+        snap = pg.evaluate("""() => {
           const root = document.getElementById('region');
+          const r = root.querySelector('.callout-inner').getBoundingClientRect();
+          const pts = (root.querySelector('polyline').getAttribute('points') || '')
+            .trim().split(/\\s+/).filter(Boolean).map(p => p.split(',').map(Number));
           return {x: r.x, y: r.y, w: r.width, h: r.height,
+                  side: root.dataset.side,
                   name: root.querySelector('.callout-name').innerText,
-                  note: root.querySelector('.callout-note').innerText};
+                  note: root.querySelector('.callout-note').innerText,
+                  lead: pts};
         }""")
+        c, lead = snap, snap["lead"]
         vw, vh = 1600, 1000
         check("callout card is fully on screen",
               c["x"] >= -1 and c["y"] >= -1
               and c["x"] + c["w"] <= vw + 1 and c["y"] + c["h"] <= vh + 1, str(c))
         check("callout card has real size", 80 < c["w"] < vw * 0.6 and 20 < c["h"] < vh * 0.6,
               f"{c['w']}x{c['h']}")
-        lead = pg.eval_on_selector(".callout-leader polyline", """e => {
-          const pts = e.getAttribute('points') || '';
-          return pts.trim().split(/\\s+/).map(p => p.split(',').map(Number));
-        }""")
         check("leader is drawn with at least two points", len(lead) >= 2, str(lead))
         check("every leader point is on screen",
               all(-2 <= x <= vw + 2 and -2 <= y <= vh + 2 for x, y in lead), str(lead))
@@ -226,7 +244,7 @@ with sync_playwright() as pw:
             near = (c["x"] - 30 <= end[0] <= c["x"] + c["w"] + 30
                     and c["y"] - 30 <= end[1] <= c["y"] + c["h"] + 30)
             check("leader terminates at the callout card", near,
-                  f"end {end} vs card {c['x']},{c['y']} {c['w']}x{c['h']}")
+                  f"side={c['side']} end={end} card={c['x']:.0f}..{c['x'] + c['w']:.0f}")
         check("callout does not cover the side panels",
               c["x"] + c["w"] <= pg.eval_on_selector(
                   ".col-r", "e => e.getBoundingClientRect().left") + 2

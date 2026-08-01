@@ -678,3 +678,6 @@ body.doc .footer strong { color: var(--fg-2); font-weight: 500; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before { animation: none !important; transition: none !important; }
 }
+
+/* Secondary cell: the movement a target implies, subordinate to the target. */
+.doc td.dim { color: var(--fg-3); }

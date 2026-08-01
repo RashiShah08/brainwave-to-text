@@ -29,6 +29,34 @@
   </section>
 
   <section class="card">
+    <h2>What the subject was asked to do</h2>
+    <p class="note">
+      The recordings come from the PhysioNet EEG Motor Movement/Imagery
+      Database. A target appeared on the screen and the subject responded to it
+      until it disappeared, then relaxed. <b>The target position is what a
+      decode recovers</b> &mdash; BCI2000 stored exactly this as its
+      <code>TargetCode</code>. The movement is what the subject did about it.
+    </p>
+    <dl class="spec">
+      {% if cue_positions %}
+        {% for label, position in cue_positions.items() %}
+        <dt>{{ {'left': '&larr;', 'right': '&rarr;', 'top': '&uarr;', 'bottom': '&darr;'}[position] | safe }}
+            {{ position }}</dt>
+        <dd>imagine {{ label.replace('_', ' ') }}</dd>
+        {% endfor %}
+      {% else %}
+        <dt>Cue</dt><dd>not described for this task</dd>
+      {% endif %}
+    </dl>
+    <p class="note">
+      The two pairs are not the same question. Left and right vary across the
+      midline, so the two classes differ in which hemisphere went quiet. Top and
+      bottom do not: the foot area sits medially, under the vertex, so that pair
+      is lateral against medial and has no left or right in it at all.
+    </p>
+  </section>
+
+  <section class="card">
     <h2>Input contract</h2>
     <p class="note">
       Enforced, not coerced. A recording that does not match is <b>rejected</b>
