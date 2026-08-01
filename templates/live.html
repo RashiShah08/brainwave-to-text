@@ -119,6 +119,7 @@
         <div class="rows" style="margin-top:10px">
           <div class="row2"><span class="k">Last committed</span><span class="v is-alert" id="ld-class">&mdash;</span></div>
           <div class="row2"><span class="k">&mu;/&beta; lower over</span><span class="v" id="ld-site">&mdash;</span></div>
+          <div class="row2"><span class="k">Contrast axis</span><span class="v" id="ph-axis">&mdash;</span></div>
         </div>
       </div>
     </section>
@@ -218,11 +219,17 @@ let scene = null;
 let controller = null;
 let state = { decisions: 0, timeouts: 0, windowSum: 0, sinceDecision: 0 };
 
+// The loaded model's classes, so the specimen knows which axis this task
+// varies before a recording has been played.
+const MODEL_CLASSES = {{ model.classes | tojson }};
+
 window.neuralWorld.then((env) => {
   scene = env;
   if (!env) { els.ovStatus.textContent = 'no webgl'; return; }
   env.setStage(document.getElementById('stage'));
   buildKeyed(env);
+  document.getElementById('ph-axis').textContent =
+    env.setContrast(MODEL_CLASSES).label;
 });
 
 // ---- structure table ------------------------------------------------------
@@ -434,20 +441,26 @@ function setNum(id, v) { document.getElementById(id).textContent = v; }
 // imagining one hand suppresses the rhythm over the opposite hemisphere -- is
 // sound physiology, but applying it to a label would state a fact about this
 // trial that this trial's data was never asked about. So the row shows which
-// electrode group actually sat lower, whichever side that turns out to be.
+// electrode group actually sat lower, whichever it turns out to be, on the
+// axis the loaded task varies: left against right for a hand task, lateral
+// against midline for fists versus feet.
 function showDecision(label, measured) {
   els.ovText.textContent = label;
   els.ovText.classList.remove('pop');
   void els.ovText.offsetWidth;
   els.ovText.classList.add('pop');
   setNum('ld-class', label);
+  // Every axis the task varies is reported, not just the one the specimen
+  // happened to light: a four-class task separates on two of them, and showing
+  // one would quietly drop half of what was measured.
   let site = '—';
-  if (measured && measured.side === 'left_motor') {
-    site = 'left sites  ' + measured.left.toFixed(2) + ' / ' + measured.right.toFixed(2);
-  } else if (measured && measured.side === 'right_motor') {
-    site = 'right sites  ' + measured.right.toFixed(2) + ' / ' + measured.left.toFixed(2);
-  } else if (measured) {
-    site = 'no difference';
+  if (measured && measured.axes) {
+    site = measured.axes.map((x) => (
+      x.decided
+        ? x.lowerName + ' ' + x.lowerLevel.toFixed(2) + '/' + x.otherLevel.toFixed(2)
+        : x.aName.replace(' sites', '') + '–' + x.bName.replace(' sites', '')
+          + ' level'
+    )).join('   ');
   }
   setNum('ld-site', site);
   setNum('pv-command', label);
@@ -492,6 +505,12 @@ function pulse(step) {
 function handle(msg) {
   if (msg.type === 'start') {
     buildBars(msg.classes, parseFloat(document.getElementById('threshold').value));
+    // The axis the specimen reports on follows the loaded task's classes, not
+    // an assumption baked into the page.
+    if (scene) {
+      document.getElementById('ph-axis').textContent =
+        scene.setContrast(msg.classes).label;
+    }
     if (msg.trace) scope.init(msg.trace);
     els.ovStatus.textContent = 'decoding';
     els.ovStatus.classList.add('is-live');

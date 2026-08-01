@@ -10,9 +10,12 @@
  * only.
  *
  * Regions light for two different reasons and are coloured accordingly: warm
- * red is what the decoder is doing, cyan is what the reader has selected.
- * Motor imagery is contralateral, so a committed "right hand" flares the LEFT
- * primary motor cortex.
+ * red is what the decoder is doing, cyan is what the reader has selected. What
+ * flares on a committed decision is whichever electrode group measured the
+ * lower mu/beta, on the axis the loaded task actually varies -- left against
+ * right for a hand task, lateral against midline for a fists-versus-feet one,
+ * whose cue is a target at the top or bottom of the screen and has no left or
+ * right in it at all. See setContrast().
  *
  * Two things worth knowing before changing any of this:
  *
@@ -392,7 +395,8 @@ export class NeuralEnvironment {
     this.measured = false;
 
     this.flashAmount = 0;
-    this.flashRegion = -1;
+    this.flashRegions = [];
+    this.flashSides = [];
     this.selected = -1;
     this.hovered = -1;
     this.wash = new Float32Array(N_REGIONS);
@@ -1127,7 +1131,72 @@ export class NeuralEnvironment {
   }
 
   /**
-   * Light the side that actually measured lower mu/beta, and report it.
+   * Which pair of electrode groups this model's classes are actually
+   * distinguished by. Assigned by the page from the served class list.
+   *
+   * Left-vs-right hand and fists-vs-feet are not the same question and do not
+   * live in the same place. Imagining one hand suppresses the rhythm over the
+   * opposite hemisphere, so the contrast is lateral-vs-lateral and the useful
+   * comparison is C3's neighbourhood against C4's. The foot area is not to one
+   * side of anything: it sits medially, folded into the interhemispheric
+   * fissure under Cz, so fists-vs-feet is lateral-vs-medial and comparing left
+   * against right would be reading noise on an axis the task never varied.
+   * That task's cue is a target at the top or bottom of the screen, and there
+   * is no left or right in it at all.
+   */
+  setContrast(classes) {
+    const set = [...new Set((classes || []).map((c) => String(c).toLowerCase()))];
+    const has = (s) => set.some((c) => c.includes(s));
+    const LEFT_RIGHT = {
+      key: 'left_right',
+      a: ['left_motor'],
+      b: ['right_motor'],
+      aName: 'left sites',
+      bName: 'right sites',
+    };
+    const LATERAL_MEDIAL = {
+      key: 'lateral_medial',
+      a: ['left_motor', 'right_motor'],   // hand areas, both hemispheres
+      b: ['midline_motor'],               // foot area, under the vertex
+      aName: 'lateral sites',
+      bName: 'midline sites',
+    };
+
+    const axes = [];
+    // A four-class task varies on *both* axes -- left against right for the
+    // single-hand classes, lateral against midline for fists against feet --
+    // so reporting only one of them would drop half of what the task asked.
+    if (has('left') && has('right')) axes.push(LEFT_RIGHT);
+    if (has('feet') || has('foot')) axes.push(LATERAL_MEDIAL);
+    if (!axes.length) axes.push(LEFT_RIGHT);
+
+    this.contrasts = axes;
+    this.contrast = axes[0];
+    return {
+      key: axes.map((x) => x.key).join('+'),
+      axes,
+      aName: axes[0].aName,
+      bName: axes[0].bName,
+      label: axes.map((x) => x.aName + ' vs ' + x.bName).join('  ·  '),
+    };
+  }
+
+  /** Mean level across several groups, weighted by how many contacts each has. */
+  _poolLevel(levels, keys) {
+    const groups = this.siteGroups();
+    let sum = 0;
+    let n = 0;
+    for (const k of keys) {
+      const i = groups.findIndex((g) => g.key === k);
+      if (i < 0) return null;
+      sum += levels[i] * groups[i].members.length;
+      n += groups[i].members.length;
+    }
+    return n ? sum / n : null;
+  }
+
+  /**
+   * Light whichever side of the task's own contrast measured lower mu/beta.
    *
    * The previous behaviour applied the contralateral rule to the decoded label
    * -- left_fist lights right motor cortex -- which is textbook physiology but
@@ -1141,26 +1210,54 @@ export class NeuralEnvironment {
     if (!decision || decision.timed_out) return null;
     const levels = this.siteLevels();
     if (!levels) return null;
-    const groups = this.siteGroups();
-    const li = groups.findIndex((g) => g.key === 'left_motor');
-    const ri = groups.findIndex((g) => g.key === 'right_motor');
-    if (li < 0 || ri < 0) return null;
+    if (!this.contrasts) this.setContrast(null);
 
-    const diff = levels[li] - levels[ri];
-    // Below this the two sides are level to within display resolution, and
+    // Below this the two groups are level to within display resolution, and
     // naming a winner would be reading noise.
     const DEADBAND = 0.02;
-    if (Math.abs(diff) < DEADBAND) {
-      this.flashSide = null;
-      this.flashRegion = -1;
-      this.flashAmount = 0;
-      return { side: null, left: levels[li], right: levels[ri], diff };
+    const axes = [];
+    for (const c of this.contrasts) {
+      const a = this._poolLevel(levels, c.a);
+      const b = this._poolLevel(levels, c.b);
+      if (a === null || b === null) continue;
+      const diff = a - b;
+      const decided = Math.abs(diff) >= DEADBAND;
+      axes.push({
+        key: c.key, a, b, diff, decided,
+        aName: c.aName, bName: c.bName,
+        lowerKeys: decided ? (diff < 0 ? c.a : c.b) : null,
+        lowerName: decided ? (diff < 0 ? c.aName : c.bName) : null,
+        lowerLevel: decided ? Math.min(a, b) : null,
+        otherLevel: decided ? Math.max(a, b) : null,
+      });
     }
-    const side = diff < 0 ? 'left_motor' : 'right_motor';
-    this.flashSide = side;
-    this.flashRegion = SITE_TO_REGION[side];
+    if (!axes.length) return null;
+
+    // With two axes in play only one thing can be lit, so it is the axis that
+    // actually separated further; a near-level axis is the weaker claim.
+    const lead = axes
+      .filter((x) => x.decided)
+      .sort((x, y) => Math.abs(y.diff) - Math.abs(x.diff))[0] || null;
+
+    if (!lead) {
+      this.flashSides = [];
+      this.flashRegions = [];
+      this.flashAmount = 0;
+      return { axes, lower: null };
+    }
+    // A group of contacts can span more than one structure -- pooling both
+    // hand areas is the whole point of the fists contrast -- so every structure
+    // the lower group sits over is lit, not an arbitrary one of them.
+    this.flashSides = [...lead.lowerKeys];
+    this.flashRegions = lead.lowerKeys.map((k) => SITE_TO_REGION[k]);
     this.flashAmount = 1;
-    return { side, left: levels[li], right: levels[ri], diff };
+    return {
+      axes,
+      lower: lead.key,
+      lowerName: lead.lowerName,
+      lowerLevel: lead.lowerLevel,
+      otherLevel: lead.otherLevel,
+    };
   }
 
   reset() {
@@ -1168,8 +1265,8 @@ export class NeuralEnvironment {
     this.target.fill(0.42);
     this.measured = false;
     this.flashAmount = 0;
-    this.flashRegion = -1;      // else the last run's answer stays lit
-    this.flashSide = null;
+    this.flashRegions = [];     // else the last run's answer stays lit
+    this.flashSides = [];
     this.wash.fill(0);
   }
 
@@ -1231,7 +1328,7 @@ export class NeuralEnvironment {
       // now is the recording.
       const v = Math.min(1, Math.max(0, this.power[i]));
       this.vis[i] = v;
-      const lit = this.flashAmount > 0 && e.region === this.flashSide
+      const lit = this.flashAmount > 0 && this.flashSides.includes(e.region)
         ? this.flashAmount : 0;
       this._col.copy(INK).lerp(OXBLOOD, lit * 0.9);
       const k = i * 3;
@@ -1262,7 +1359,7 @@ export class NeuralEnvironment {
       let hi = Math.max(live * 0.42, this.washEased[r] * 0.34);
       // The committed structure holds a floor and pulses above it, so it is
       // still obvious which one answered a second after the pulse has gone.
-      if (r === this.flashRegion) hi = Math.max(hi, 0.46 + 0.54 * this.flashAmount);
+      if (this.flashRegions.includes(r)) hi = Math.max(hi, 0.46 + 0.54 * this.flashAmount);
       if (r === this.hovered && r !== this.selected) hi = Math.max(hi, 0.18);
       if (r === this.selected) hi = Math.max(hi, 0.62 + 0.08 * Math.sin(t * 2.4));
       this.uHi[r] = hi;
