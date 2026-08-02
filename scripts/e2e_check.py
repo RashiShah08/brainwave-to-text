@@ -144,7 +144,11 @@ with sync_playwright() as pw:
           pg.eval_on_selector_all("table tbody tr", "r => r.length") >= 10,
           str(pg.eval_on_selector_all("table tbody tr", "r => r.length")))
     body_txt = pg.inner_text("body")
-    check("result page states the measured accuracy", "60.6" in body_txt)
+    served = requests.get(BASE + "/api/v1/model", timeout=60).json()
+    SERVED_CLASSES = set(served["card"]["classes"])
+    acc = served["performance"]["cross_subject_accuracy"]
+    check("result page states the served model's measured accuracy",
+          acc is None or f"{acc * 100:.1f}" in body_txt, f"{acc}")
     check("result page separates confidence from correctness",
           "not" in body_txt.lower() and "confiden" in body_txt.lower())
     # Located by header rather than by index: the table gains and loses columns
@@ -306,7 +310,7 @@ with sync_playwright() as pw:
     check("logged window counts are positive integers",
           all(int(r[4]) > 0 for r in log if len(r) > 4 and r[4]))
     check("committed answer is a model class",
-          pg.inner_text("#ld-class").strip() in {"left_fist", "right_fist"},
+          pg.inner_text("#ld-class").strip() in SERVED_CLASSES,
           pg.inner_text("#ld-class"))
     check("lateralisation is reported as a measurement",
           "sites" in pg.inner_text("#ld-site") or "no difference" in pg.inner_text("#ld-site"),

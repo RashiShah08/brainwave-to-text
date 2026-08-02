@@ -4,9 +4,10 @@
 {% block content %}
 <h1>Decode a recording</h1>
 <p class="lede">
-  Classifies each cued trial in a 64-channel EDF file as one of the model's
-  imagined-movement classes. The output is which movement was imagined &mdash;
-  one of {{ model.classes | length }} &mdash; and nothing more.
+  Recovers, for each cued trial in a 64-channel EDF file,
+  <b>where the target appeared on screen</b>
+  {%- if cue_positions %} &mdash; {{ cue_positions.values() | join(', ') }}{% endif %} &mdash;
+  and the movement that implies. Nothing more.
 </p>
 
 <div class="grid2">
@@ -77,8 +78,17 @@
   <h2>Measured accuracy</h2>
   <div class="metrics">
     <div class="metric">
-      <div class="label">Within-subject</div>
+      <div class="label">Cross-subject</div>
       <div class="value accent">
+        {% if performance.cross_subject_accuracy is not none %}
+          {{ '%.1f' % (performance.cross_subject_accuracy * 100) }}%
+        {% else %}&mdash;{% endif %}
+      </div>
+      <div class="sub">a person it has never seen</div>
+    </div>
+    <div class="metric">
+      <div class="label">Within-subject</div>
+      <div class="value">
         {% if performance.within_subject_accuracy is not none %}
           {{ '%.1f' % (performance.within_subject_accuracy * 100) }}%
         {% else %}&mdash;{% endif %}
@@ -86,17 +96,8 @@
       <div class="sub">
         {% if performance.within_subject_std is not none %}
           &plusmn;{{ '%.1f' % (performance.within_subject_std * 100) }} across subjects
-        {% else %}not evaluated{% endif %}
+        {% else %}not evaluated for this model{% endif %}
       </div>
-    </div>
-    <div class="metric">
-      <div class="label">Cross-subject</div>
-      <div class="value">
-        {% if performance.cross_subject_accuracy is not none %}
-          {{ '%.1f' % (performance.cross_subject_accuracy * 100) }}%
-        {% else %}&mdash;{% endif %}
-      </div>
-      <div class="sub">unseen person, no calibration</div>
     </div>
     <div class="metric">
       <div class="label">Chance</div>
@@ -110,11 +111,18 @@
     </div>
   </div>
   <p class="notice">
-    <strong>Read the two numbers separately.</strong> Within-subject accuracy is
-    what a user gets once the system is calibrated on their own recordings, and
-    it varies enormously between people &mdash; motor imagery simply does not
-    work for a substantial minority. Cross-subject accuracy is what an
-    uncalibrated model achieves on someone it has never seen.
+    <strong>Cross-subject is the number that describes this page.</strong> It is
+    what an uncalibrated model achieves on a person it has never recorded, which
+    is what happens when you upload a file. Within-subject accuracy &mdash; a
+    model refitted on one person's own trials &mdash; is always higher and is
+    not what is being served here.
+  </p>
+  <p class="notice">
+    A recording from a subject this model was trained on scores higher still,
+    because the model has seen that person's data. On the PhysioNet subjects it
+    was trained on it reaches about 50%; on someone genuinely new, the
+    cross-subject figure above. Both are far above chance and neither is
+    reliable enough to control anything that matters.
   </p>
 </section>
 

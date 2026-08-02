@@ -98,7 +98,12 @@ hp = np.array([[p["probabilities"][c] for c in card.classes] for p in http["pred
 check("decode page full probability vector == estimator",
       np.allclose(hp, proba, atol=6e-5),
       f"max dev {np.abs(hp - proba).max():.2e}")
-check("probabilities sum to 1", np.allclose(hp.sum(axis=1), 1.0, atol=1e-6))
+# The API rounds each probability to 4 decimals, so a k-class vector can miss
+# 1.0 by up to k/2 * 1e-4. Tolerating less than that fails on arithmetic rather
+# than on anything the model did.
+ROUND_TOL = len(card.classes) * 5e-5 + 1e-9
+check("probabilities sum to 1", np.allclose(hp.sum(axis=1), 1.0, atol=ROUND_TOL),
+      f"max dev {np.abs(hp.sum(axis=1) - 1).max():.2e}, tol {ROUND_TOL:.2e}")
 check("decode output is not constant",
       len(set(hl)) > 1 or len(set(np.round(hc, 6))) > 1,
       f"{len(set(hl))} labels, {len(set(np.round(hc, 6)))} distinct confidences")
@@ -126,7 +131,8 @@ check("stream trace sfreq == model card",
 sw = [e for e in win if "probabilities" in e]
 perw = np.array([[e["probabilities"][c] for c in card.classes] for e in sw])
 check("stream per-window probabilities sum to 1",
-      np.allclose(perw.sum(axis=1), 1.0, atol=1e-6))
+      np.allclose(perw.sum(axis=1), 1.0, atol=ROUND_TOL),
+      f"max dev {np.abs(perw.sum(axis=1) - 1).max():.2e}")
 check("stream per-window probabilities vary over time",
       float(perw.std(axis=0).mean()) > 1e-4,
       f"sd {perw.std(axis=0).mean():.4f}")
@@ -174,7 +180,8 @@ if raws:
 
 # --- posterior must be accumulated, not copied -----------------------------
 post = np.array([[e["posterior"][c] for c in card.classes] for e in sw])
-check("posterior sums to 1", np.allclose(post.sum(axis=1), 1.0, atol=1e-6))
+check("posterior sums to 1", np.allclose(post.sum(axis=1), 1.0, atol=ROUND_TOL),
+      f"max dev {np.abs(post.sum(axis=1) - 1).max():.2e}")
 check("posterior differs from per-window probabilities (it accumulates)",
       not np.allclose(post, perw, atol=1e-6),
       f"mean |diff| {np.abs(post - perw).mean():.4f}")

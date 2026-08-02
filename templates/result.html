@@ -52,19 +52,19 @@
       <div class="metric">
         <div class="label">Model accuracy</div>
         <div class="value">
-          {% if performance and performance.within_subject_accuracy is not none %}
-            {{ '%.1f' % (performance.within_subject_accuracy * 100) }}%
+          {% if performance and performance.cross_subject_accuracy is not none %}
+            {{ '%.1f' % (performance.cross_subject_accuracy * 100) }}%
           {% else %}&mdash;{% endif %}
         </div>
-        <div class="sub">within-subject, measured</div>
+        <div class="sub">cross-subject, measured</div>
       </div>
     </div>
     <p class="notice">
       Confidence is the model's probability for the chosen class on that trial.
       It is <strong>not</strong> a measure of whether the answer is right &mdash;
       at
-      {% if performance and performance.within_subject_accuracy is not none %}
-        {{ '%.0f' % (performance.within_subject_accuracy * 100) }}%
+      {% if performance and performance.cross_subject_accuracy is not none %}
+        {{ '%.0f' % (performance.cross_subject_accuracy * 100) }}%
       {% else %}the measured{% endif %}
       accuracy a confident prediction is still frequently wrong.
     </p>

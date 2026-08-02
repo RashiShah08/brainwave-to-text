@@ -14,10 +14,14 @@
     <div class="strip-item" data-rank="1"><span class="strip-key">Method</span><span class="strip-val">{{ model.pipeline }}</span></div>
     <div class="strip-item" data-rank="2"><span class="strip-key">Channels</span><span class="strip-val">{{ model.n_channels }}</span></div>
     <div class="strip-item" data-rank="2"><span class="strip-key">Rate</span><span class="strip-val">{{ '%g' % model.sfreq }} Hz</span></div>
-    <div class="strip-item" data-rank="1"><span class="strip-key">Within-subj</span><span class="strip-val">
-      {% if performance and performance.within_subject_accuracy is not none %}
-        {{ '%.1f' % (performance.within_subject_accuracy * 100) }}%
+    {# Cross-subject: what an uncalibrated model gets on someone it has never
+       seen, which is the condition this page actually runs in. #}
+    <div class="strip-item" data-rank="1"><span class="strip-key">Cross-subj</span><span class="strip-val">
+      {% if performance and performance.cross_subject_accuracy is not none %}
+        {{ '%.1f' % (performance.cross_subject_accuracy * 100) }}%
       {% else %}&mdash;{% endif %}</span></div>
+    <div class="strip-item" data-rank="2"><span class="strip-key">Chance</span><span class="strip-val">
+      {{ '%.0f' % (performance.chance_level * 100) }}%</span></div>
     <div class="strip-item strip-spacer"></div>
     <div class="strip-item"><span class="strip-key">t</span><span class="strip-val" id="ov-time">0.0 s</span></div>
     <div class="strip-item"><span class="strip-key">State</span><span class="strip-val" id="ov-status">idle</span></div>
