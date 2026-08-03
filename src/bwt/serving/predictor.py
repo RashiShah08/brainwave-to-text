@@ -12,6 +12,7 @@ first-second window, and no way to notice.
 from __future__ import annotations
 
 import math
+import threading
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -105,6 +106,15 @@ class Predictor:
         self.card = card
         self.name = name
         self.max_epochs = max_epochs
+        # One model object is shared by every request thread, and inference
+        # descends into native linear algebra -- pyriemann's covariance means
+        # and matrix square roots for the transductive pipelines. Two threads
+        # in there at once killed the whole process, not an exception but a
+        # hard death with nothing in the log: two simultaneous decodes were
+        # enough, and the site went down for everyone. Inference is serialised
+        # here, at the single point every caller goes through. A decode is a
+        # fraction of a second, so the queue costs nothing that matters.
+        self._lock = threading.Lock()
 
     # -- construction ----------------------------------------------------- #
 
@@ -156,6 +166,18 @@ class Predictor:
 
     # -- prediction ------------------------------------------------------- #
 
+    def predict_proba(self, X: np.ndarray) -> np.ndarray | None:
+        """Class probabilities for a validated array, one thread at a time.
+
+        Every path that reaches the fitted estimator must come through here.
+        Calling ``predictor.model.predict_proba`` directly bypasses the lock and
+        reintroduces the crash.
+        """
+        if not hasattr(self.model, "predict_proba"):
+            return None
+        with self._lock:
+            return np.asarray(self.model.predict_proba(X))
+
     def predict_array(
         self, X: np.ndarray, *, onsets: Sequence[float] | None = None,
         source: str = "epoch",
@@ -163,12 +185,13 @@ class Predictor:
         X = self.validate_array(X)
         classes = list(self.card.classes)
 
-        if hasattr(self.model, "predict_proba"):
-            proba = np.asarray(self.model.predict_proba(X))
-            indices = proba.argmax(axis=1)
-        else:  # pragma: no cover - every registry pipeline exposes predict_proba
-            indices = np.asarray(self.model.predict(X))
+        proba = self.predict_proba(X)
+        if proba is None:  # pragma: no cover - every registry pipeline has it
+            with self._lock:
+                indices = np.asarray(self.model.predict(X))
             proba = np.eye(len(classes))[indices]
+        else:
+            indices = proba.argmax(axis=1)
 
         out: list[Prediction] = []
         for position, class_index in enumerate(indices):

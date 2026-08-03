@@ -318,7 +318,9 @@ class StreamingDecoder:
         self.accumulator.reset()
 
         for window in stream:
-            probabilities = self.predictor.model.predict_proba(
+            # Through the predictor, not the estimator: the lock lives there
+            # and concurrent native inference crashes the process.
+            probabilities = self.predictor.predict_proba(
                 window.data[None, ...].astype(np.float32)
             )[0]
             probs = {c: float(p) for c, p in zip(self.classes, probabilities, strict=True)}

@@ -229,6 +229,12 @@ def _register_routes(app: Flask) -> None:
             raise ValueError("step must be between 0.05 and 5 seconds")
         if not 0.5 < threshold < 1.0:
             raise ValueError("threshold must be between 0.5 and 1.0")
+        # Unvalidated, max_windows=0 or a negative made the accumulator give up
+        # on the very first window, so every window in the recording emitted a
+        # timed-out decision -- a stream of hundreds of non-answers, served with
+        # a 200 as though it meant something.
+        if not 1 <= max_windows <= 1000:
+            raise ValueError("max_windows must be between 1 and 1000")
 
         path = _save_upload()
 
@@ -332,7 +338,7 @@ def _iter_events(decoder, stream, *, with_band_power: bool = False,
     )
 
     for window in stream:
-        probabilities = decoder.predictor.model.predict_proba(
+        probabilities = decoder.predictor.predict_proba(
             window.data[None, ...].astype(np.float32)
         )[0]
         decision = decoder.accumulator.update(probabilities)
