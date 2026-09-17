@@ -464,7 +464,8 @@ confusion matrices differ by exactly the training rows:
 | Genuinely held out | 3,430 | 958 | **72.07%** |
 
 Against a 67.93% majority-class baseline, with 28.5% recall on class 1 — and its
-two classes had no coherent meaning. Details in `legacy/README.md`.
+two classes had no coherent meaning. Details in
+[docs/v1-postmortem.md](docs/v1-postmortem.md).
 
 ---
 
@@ -548,6 +549,25 @@ retraining.
 The unit suite is hermetic: it generates synthetic epochs with a real, learnable
 class difference and writes synthetic EDF files, so it runs on a checkout with no
 dataset present. Neural tests skip automatically if PyTorch is absent.
+
+| Suite | What it covers | Run |
+|---|---|---|
+| `tests/test_api_edge_cases.py` | Adversarial HTTP tests: hostile filenames and payloads, every sampling-rate and channel-set violation, the NDJSON stream grammar checked frame by frame against the estimator, temp-file hygiene, and concurrency and thread starvation against a real waitress server | `pytest tests/test_api_edge_cases.py` |
+| `tests/test_core_edge_cases.py` | Property-based tests (Hypothesis) of the accumulator, windowing and band power, plus config, artifact, cache, protocol and permutation-test edge cases | `pytest tests/test_core_edge_cases.py` |
+| `tests/test_frontend_e2e.py` | Playwright: both pages checked against the JSON API, double submits, aborts, malformed stream frames, hostile file and class names, no-WebGL mode, viewport sweep | `make test-e2e` |
+| `tests/test_bug_fixes.py` | Every defect the suites above found, pinned from all sides: replay-budget slots under load and on every failure path, strict numeric query parsing (property-tested), truncation at the cap ±1, stream/decode message parity, flat and non-finite input, damaged EDFs, estimator refusals that must not leak internals | `pytest tests/test_bug_fixes.py` |
+| `tests/test_security_hardening.py` | The attack surface from the socket up: security headers and the CSP nonce on every kind of response, log forging, the WSGI server's limits under raw-socket abuse (oversized declared bodies, malformed framing, slowloris, header floods), multipart abuse, every route × every method, CORS, model-weight integrity, templates safe by construction | `pytest tests/test_security_hardening.py` |
+| `tests/test_fuzzing.py` | Hypothesis fuzzing: every fixed-width EDF header field (global and per signal), several at once, bit flips in the data records, truncation and padding, arbitrary bytes, query strings, URL paths, raw bodies and filenames. Every input must get a clean 2xx/4xx, strict JSON, a terminated stream and no leaked temp file. `BWT_FUZZ_EXAMPLES` sets the depth (default 120) | `pytest tests/test_fuzzing.py` |
+| `tests/test_soak.py` | Six clients of mixed traffic against a live server for `BWT_SOAK_SECONDS` (default 120), asserting no failures and no creep in memory, threads, temp files, replay slots or /healthz latency | `BWT_SOAK=1 pytest tests/test_soak.py` |
+| `tests/test_hostile_recordings.py` | Recordings built to break the decoder: channel spelling, duplicate and surplus channels, malformed, duplicated, flooding and last-sample cues, every wrong sampling rate, a ten-minute file, sample-exact stream/decode parity, a transductive model under 12 threads | `pytest tests/test_hostile_recordings.py` |
+| `tests/test_real_model_audit.py` | The served artifact against the real recordings: label integrity, units, estimator parity, class collapse | `pytest -m slow tests/test_real_model_audit.py` |
+| `tests/test_real_corpus_sweep.py` | All 109 subjects through the served model's decode and stream paths; only an already-excluded subject may be refused, and only for a stated reason | `pytest -m slow tests/test_real_corpus_sweep.py` |
+
+A defect found by a test is first recorded as an `xfail(strict=True)` test whose
+reason states the bug, so the suite stays green while it is tracked and fails as
+soon as a fix lands without its marker being removed. List any open ones with
+`pytest -rx`. The twenty found by the edge-case suites are all fixed; their tests
+now pass outright, and `tests/test_bug_fixes.py` holds the harder follow-ups.
 
 ### Model artifacts
 

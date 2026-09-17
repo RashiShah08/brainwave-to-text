@@ -5,6 +5,72 @@ Notable changes to this project. Versions follow [semantic versioning](https://s
 Accuracy figures are stated with the protocol that produced them, because a
 motor-imagery number without its protocol is meaningless.
 
+## [Unreleased]
+
+### Security
+
+- **Content-Security-Policy with a per-response nonce** on every response, plus
+  `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: no-referrer` and `Cross-Origin-Opener-Policy`. Inline
+  scripts run only with the nonce, so injected markup cannot execute; the site
+  cannot be framed. API answers are sent `Cache-Control: no-store`.
+- **Log forging** — the request path was logged raw, so `%0A` in a URL wrote a
+  separate, legitimate-looking log line. Control and line-separator characters
+  are now escaped and the logged path is length-bounded.
+- **Request body limit at the server** — waitress buffered up to 1 GB of a body
+  before the application's 64 MB limit applied. `waitress_options()` now holds
+  it to the upload limit, so an oversized upload is refused from its headers;
+  both `bwt serve` and the module entry point use it.
+- **Model weights are verified before unpickling** — the card records the
+  SHA-256 of `pipeline.joblib`, and a swapped or corrupted file is refused
+  without being opened. Artifacts saved before this load with a warning.
+- A multipart flood is reported as too many form fields, not as an oversized
+  upload.
+
+### Accessibility
+
+- The file inputs could not receive keyboard focus (`display: none`), so a
+  keyboard-only user could not choose a file; they are now visually hidden but
+  focusable, with a visible focus ring on the drop zone.
+- The decode page works with JavaScript disabled; the live page says it needs
+  it.
+- The dimmest text colour now meets WCAG AA contrast (4.5:1) on every panel.
+
+### Fixed
+
+Twenty defects found by the new edge-case and browser suites.
+
+- **Availability** — a paced live replay sleeps in a server worker for its whole
+  length, so four slow viewers took every worker and the site, `/healthz`
+  included, stopped answering. Paced replays now have a budget of
+  `serve.threads - 1` (new setting, default 4); past it they get a 503 that
+  says to retry or replay unthrottled.
+- **Injection** — the live page wrote class names into markup, so a name with a
+  quote executed as HTML. Every class-name sink now sets text or attributes.
+- **Uploads** — a header-only EDF was a 500 (now a 400 for every damaged file);
+  an oversized upload from the decode form showed raw JSON (now the Rejected
+  page, and the page refuses the file before sending it).
+- **Stream parameters** — unparseable values (`threshold=abc`, `1_000`, `nan`)
+  were silently replaced by defaults; they are now a 400 naming the parameter.
+  `max_windows=1` could only ever time out; a false "truncated" frame was sent
+  at exactly the window cap; a wrong sampling rate on the stream said "could not
+  be decoded" instead of naming the rates.
+- **Signal** — a flat recording was refused with scikit-learn's internal message,
+  and NaN or infinite samples reached the estimator. Both are now input-contract
+  errors in domain terms, and estimator refusals never echo library internals.
+- **Accumulator** — one NaN probability poisoned all later evidence; impossible
+  window budgets were accepted. Both are refused before any state changes.
+- **Live page** — choosing a file mid-run re-armed Start (a second interleaved
+  stream); a refused upload left the page saying "decoding…" forever; a stopped
+  run settling late could release the next run's controls; a stream cut off
+  without an end frame kept claiming to decode.
+- **Decode page** — after Back the chosen file was restored but Decode stayed
+  disabled. Both pages scrolled sideways on phones; the instrument now stacks
+  below tablet width.
+- **Small functions** — NaN accuracy produced a NaN information transfer rate
+  (invalid JSON); subject lists like `9-5` silently selected nobody; tuple
+  settings such as `BWT_TRAIN_PROTOCOLS` could not be set from the environment.
+
 ## [3.0.0] — 2026-07-28
 
 Adds neural decoders, per-user calibration, continuous decoding and a second
@@ -113,5 +179,7 @@ majority-class baseline, with 28.5% recall on class 1.
 
 ## [1.0.0] — superseded
 
-Original implementation, archived under `legacy/` with a written post-mortem.
-Not runnable: every path was hardcoded to a directory that does not exist.
+Original implementation. Its post-mortem is in
+[docs/v1-postmortem.md](docs/v1-postmortem.md); the code itself was removed from
+the tree and remains in git history (it was never runnable: every path was
+hardcoded to a directory that does not exist).

@@ -6,3 +6,12 @@ pytest-cov==7.1.0
 # Needed only by the test suite, to write synthetic EDF files so the unit tests
 # exercise the real MNE reader path without requiring the 3.5 GB dataset.
 edfio==0.4.14
+
+# Property-based tests (tests/test_core_edge_cases.py).
+hypothesis==6.168.0
+
+# Real-server and browser tests (tests/test_api_edge_cases.py,
+# tests/test_frontend_e2e.py). After installing, fetch the browser once with
+# `python -m playwright install chromium`.
+requests==2.34.2
+playwright==1.61.0

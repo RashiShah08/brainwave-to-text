@@ -9,7 +9,7 @@ ifeq ($(OS),Windows_NT)
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help venv install install-dev install-deep test test-fast lint format \
+.PHONY: help venv install install-dev install-deep test test-fast test-e2e lint format \
         typecheck coverage prepare train benchmark calibrate explain serve \
         docker clean clean-all
 
@@ -32,8 +32,12 @@ install-deep:  ## Install PyTorch with CUDA 12.8 (neural pipelines)
 test:  ## Run the full test suite
 	$(BIN)/pytest
 
-test-fast:  ## Run only tests that need no dataset
-	$(BIN)/pytest -m "not slow"
+test-fast:  ## Run only tests that need no dataset and no browser
+	$(BIN)/pytest -m "not slow and not e2e"
+
+test-e2e:  ## Run the Playwright browser suite (installs chromium on first use)
+	$(BIN)/python -m playwright install chromium chromium-headless-shell
+	$(BIN)/pytest -m e2e tests/test_frontend_e2e.py
 
 coverage:  ## Run tests with a coverage report
 	$(BIN)/pytest --cov=bwt --cov-report=term-missing --cov-report=html

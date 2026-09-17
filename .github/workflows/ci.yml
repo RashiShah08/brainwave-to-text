@@ -44,7 +44,7 @@ jobs:
       # Tests needing the corpus are marked `slow` and skip themselves anyway;
       # -m "not slow" makes that explicit rather than incidental.
       - name: Test
-        run: pytest -m "not slow" --cov=bwt --cov-report=xml -q
+        run: pytest -m "not slow and not e2e" --cov=bwt --cov-report=xml -q
 
       - name: Upload coverage
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
@@ -80,6 +80,24 @@ jobs:
           pip install -e .
       - name: Test neural estimators
         run: pytest tests/test_deep_and_calibration.py -m "not slow" -q
+
+  e2e:
+    name: browser (Playwright, Chromium)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          pip install -e .
+          python -m playwright install --with-deps chromium chromium-headless-shell
+      - name: Test both pages in a real browser
+        run: pytest tests/test_frontend_e2e.py -m e2e -q
 
   docker:
     runs-on: ubuntu-latest
