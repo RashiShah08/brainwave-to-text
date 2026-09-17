@@ -50,6 +50,9 @@ class ServeConfig:
     #: bound work per request.
     max_epochs_per_request: int = 256
     strict_versions: bool = False
+    #: Server worker threads. Paced live replays may occupy all but one of
+    #: them, so a slow replay can never lock everyone else out.
+    threads: int = 4
 
 
 @dataclass
@@ -106,6 +109,10 @@ class Config:
 
 def _coerce(raw: str, annotation: Any) -> Any:
     text = str(annotation)
+    if text.startswith(("tuple", "list")):
+        # A comma-separated value. Stored as the raw string, anything iterating
+        # the setting would walk its characters.
+        return tuple(part.strip() for part in raw.split(",") if part.strip())
     if "bool" in text:
         return raw.strip().lower() in {"1", "true", "yes", "on"}
     if "int" in text:

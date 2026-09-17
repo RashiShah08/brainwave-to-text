@@ -6,6 +6,12 @@
 {% block footer %}{% endblock %}
 
 {% block fullbleed %}
+<noscript>
+  <p class="noscript">
+    The live view decodes in the browser and needs JavaScript.
+    <a href="{{ url_for('index') }}">Decode a file</a> works without it.
+  </p>
+</noscript>
 <div class="rig">
 
   <!-- Acquisition metadata, the way a recorder states its own settings. -->
@@ -203,7 +209,7 @@
 {% block content %}{% endblock %}
 
 {% block scripts %}
-<script type="module">
+<script type="module" nonce="{{ csp_nonce }}">
 const els = {
   file: document.getElementById('file'),
   zone: document.getElementById('zone'),
@@ -429,7 +435,9 @@ const scope = (() => {
 function showFile(f) {
   if (!f) { els.filename.textContent = ''; els.start.disabled = true; return; }
   els.filename.textContent = f.name + '  (' + (f.size / 1048576).toFixed(1) + ' MB)';
-  els.start.disabled = false;
+  // Choosing a file mid-run must not re-arm Start: a second stream would feed
+  // the same counters and log as the first. Start comes back when the run ends.
+  els.start.disabled = controller !== null;
 }
 els.file.addEventListener('change', () => showFile(els.file.files[0]));
 ['dragenter', 'dragover'].forEach((e) =>
@@ -447,10 +455,16 @@ function buildBars(classes, threshold) {
     const d = document.createElement('div');
     d.className = 'meter';
     d.innerHTML = '<div class="meter-head"><span class="n"></span>'
-      + '<span class="v" data-for="' + c + '">0.00</span></div>'
-      + '<div class="meter-track"><div class="meter-fill" data-bar="' + c + '"></div>'
-      + '<div class="meter-mark" style="left:' + (threshold * 100) + '%"></div></div>';
+      + '<span class="v">0.00</span></div>'
+      + '<div class="meter-track"><div class="meter-fill"></div>'
+      + '<div class="meter-mark"></div></div>';
+    // Class names arrive from the model card. They are set as text and as
+    // attribute values, never spliced into markup, so a quote in a name cannot
+    // break out of an attribute.
     d.querySelector('.n').textContent = c;
+    d.querySelector('.v').dataset.for = c;
+    d.querySelector('.meter-fill').dataset.bar = c;
+    d.querySelector('.meter-mark').style.left = (threshold * 100) + '%';
     els.bars.appendChild(d);
   });
 }
@@ -540,24 +554,14 @@ function handle(msg) {
         scene.setContrast(msg.classes).label;
     }
     if (msg.trace) scope.init(msg.trace);
-    els.ovStatus.textContent = 'decoding';
-    els.ovStatus.classList.add('is-live');
-    els.ovTag.textContent = 'decoding';
-    els.ovTag.classList.add('is-live');
+    showState('decoding', true);
     return;
   }
-  if (msg.type === 'error') {
-    els.status.textContent = msg.message;
-    els.status.classList.add('is-bad');
-    return;
-  }
+  if (msg.type === 'error') { fail(msg.message); return; }
   if (msg.type === 'truncated') { els.status.textContent = msg.message; return; }
   if (msg.type === 'end') {
     els.status.textContent = msg.n_windows + ' windows decoded';
-    els.ovStatus.textContent = 'finished';
-    els.ovStatus.classList.remove('is-live');
-    els.ovTag.textContent = 'finished';
-    els.ovTag.classList.remove('is-live');
+    showState('finished', false);
     finish();
     return;
   }
@@ -607,8 +611,28 @@ function handle(msg) {
   }
 }
 
-function finish() {
-  els.start.disabled = false;
+/** The instrument's State readout and the viewport tag, which always agree. */
+function showState(text, live) {
+  [els.ovStatus, els.ovTag].forEach((el) => {
+    el.textContent = text;
+    el.classList.toggle('is-live', live);
+  });
+}
+
+function fail(message) {
+  els.status.textContent = message;
+  els.status.classList.add('is-bad');
+  showState('error', false);
+}
+
+/**
+ * End a run and release the controls. `owner` is the run's own controller: a
+ * run that was stopped and replaced settles late, and must not release the
+ * controls of the run that replaced it.
+ */
+function finish(owner) {
+  if (owner !== undefined && owner !== controller) return;
+  els.start.disabled = !els.file.files.length;
   els.stop.disabled = true;
   controller = null;
 }
@@ -616,16 +640,13 @@ function finish() {
 els.stop.addEventListener('click', () => {
   if (controller) controller.abort();
   els.status.textContent = 'stopped';
-  els.ovStatus.textContent = 'stopped';
-  els.ovStatus.classList.remove('is-live');
-  els.ovTag.textContent = 'stopped';
-  els.ovTag.classList.remove('is-live');
+  showState('stopped', false);
   finish();
 });
 
 els.form.addEventListener('submit', (ev) => {
   ev.preventDefault();
-  if (!els.file.files.length) return;
+  if (!els.file.files.length || controller) return;
 
   state = { decisions: 0, timeouts: 0, windowSum: 0, sinceDecision: 0 };
   ['m-decisions', 'm-windows', 'm-timeouts'].forEach((i) => setNum(i, 0));
@@ -653,33 +674,55 @@ els.form.addEventListener('submit', (ev) => {
     raw: '1',
   });
 
-  controller = new AbortController();
+  const run = new AbortController();
+  controller = run;
   fetch('/api/v1/stream?' + qs.toString(), {
-    method: 'POST', body, signal: controller.signal,
+    method: 'POST', body, signal: run.signal,
   }).then((response) => {
+    if (!response.ok) {
+      // A refusal (bad file, too large, server busy) is one JSON document, not
+      // a stream. Fed to the frame parser it would be dropped as a bad frame
+      // and the page would say "decoding…" forever.
+      return response.json().catch(() => ({})).then((refusal) => {
+        if (controller !== run) return;
+        fail(refusal.message
+          || 'the server refused the request (HTTP ' + response.status + ')');
+        finish(run);
+      });
+    }
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     function pump() {
       return reader.read().then((chunk) => {
-        if (chunk.done) { finish(); return; }
+        if (controller !== run) return;
+        if (chunk.done) {
+          // A stream cut off before its end frame must not keep claiming to
+          // be decoding.
+          if (els.ovStatus.textContent === 'decoding') {
+            showState('ended', false);
+            if (!els.status.classList.contains('is-bad')) {
+              els.status.textContent = 'the stream ended before it finished';
+            }
+          }
+          finish(run);
+          return;
+        }
         buffer += decoder.decode(chunk.value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop();
         lines.forEach((line) => {
-          if (!line.trim()) return;
-          try { handle(JSON.parse(line)); } catch (e) { /* partial line */ }
+          if (!line.trim() || controller !== run) return;
+          try { handle(JSON.parse(line)); } catch (e) { /* malformed frame */ }
         });
         return pump();
       });
     }
     return pump();
   }).catch((err) => {
-    if (err.name !== 'AbortError') {
-      els.status.textContent = 'connection failed';
-      els.status.classList.add('is-bad');
-    }
-    finish();
+    if (controller !== run) return;
+    if (err.name !== 'AbortError') fail('connection failed');
+    finish(run);
   });
 });
 </script>

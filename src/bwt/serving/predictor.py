@@ -162,7 +162,36 @@ class Predictor:
                 f"({self.card.tmin}-{self.card.tmax}s at {self.card.sfreq:g} Hz), "
                 f"got {X.shape[2]}"
             )
+        if not np.isfinite(X).all():
+            raise InputContractError(
+                "epochs contain NaN or infinite samples; the recording is "
+                "corrupt, saturated beyond float range, or was exported with gaps"
+            )
         return X
+
+    def _require_rate(self, sfreq: float) -> None:
+        if not math.isclose(sfreq, self.card.sfreq, rel_tol=1e-6):
+            raise InputContractError(
+                f"recording is {sfreq:g} Hz but the model was trained at "
+                f"{self.card.sfreq:g} Hz. Resampling here would change the "
+                "spectral content the spatial filters were fitted to; upload a "
+                f"{self.card.sfreq:g} Hz recording instead."
+            )
+
+    @staticmethod
+    def _require_signal(data: np.ndarray) -> None:
+        """Refuse a recording in which every channel is constant.
+
+        That is what a disconnected amplifier or an empty export writes, and the
+        estimator's own complaint about it (log of zero variance) is library
+        internals rather than an explanation.
+        """
+        if data.ndim == 2 and data.shape[1] > 1 and bool(
+                np.all(np.ptp(data, axis=1) < 1e-6)):
+            raise InputContractError(
+                "recording has no signal: every channel is flat, which is what "
+                "a disconnected amplifier or an empty export writes"
+            )
 
     # -- prediction ------------------------------------------------------- #
 
@@ -176,7 +205,16 @@ class Predictor:
         if not hasattr(self.model, "predict_proba"):
             return None
         with self._lock:
-            return np.asarray(self.model.predict_proba(X))
+            try:
+                return np.asarray(self.model.predict_proba(X))
+            except (ValueError, FloatingPointError) as exc:
+                # The estimator's message is library internals ("Input X
+                # contains infinity ...") and is logged, not echoed.
+                log.warning("estimator refused the input: %s", exc)
+                raise InputContractError(
+                    "the model could not score this recording: its signal is "
+                    "degenerate (for example flat or saturated channels)"
+                ) from exc
 
     def predict_array(
         self, X: np.ndarray, *, onsets: Sequence[float] | None = None,
@@ -227,16 +265,11 @@ class Predictor:
         raw = read_standardised_raw(path)
 
         sfreq = float(raw.info["sfreq"])
-        if not math.isclose(sfreq, self.card.sfreq, rel_tol=1e-6):
-            raise InputContractError(
-                f"recording is {sfreq:g} Hz but the model was trained at "
-                f"{self.card.sfreq:g} Hz. Resampling here would change the "
-                "spectral content the spatial filters were fitted to; upload a "
-                f"{self.card.sfreq:g} Hz recording instead."
-            )
+        self._require_rate(sfreq)
 
         picks = self._align_channels(raw.ch_names)
         data = raw.get_data(picks=picks) * 1e6  # -> microvolts, model's units
+        self._require_signal(data)
 
         window = self.card.n_times
         offset = round(self.card.tmin * sfreq)
@@ -315,15 +348,23 @@ class Predictor:
 
     def stream_from_edf(self, path: Path, *, speed: float = 0.0,
                         step_seconds: float = 0.5):
-        """Build a sliding-window stream over a recording, in the model's channel order."""
-        from bwt.data.epochs import read_standardised_raw
+        """Build a sliding-window stream over a recording, in the model's channel order.
+
+        Holds the stream to the same input contract as a file decode -- rate,
+        channels and signal -- so the same bad recording gets the same
+        actionable message on either path. The file is read once.
+        """
         from bwt.streaming import EDFStream
 
         raw = read_standardised_raw(Path(path))
+        sfreq = float(raw.info["sfreq"])
+        self._require_rate(sfreq)
         picks = self._align_channels(raw.ch_names)
-        return EDFStream.from_edf(
-            Path(path), self.card, speed=speed, step_seconds=step_seconds,
-            picks=picks,
+        data = raw.get_data(picks=picks) * 1e6
+        self._require_signal(data)
+        return EDFStream(
+            data=data, sfreq=sfreq, window_samples=self.card.n_times,
+            step_samples=max(1, round(step_seconds * sfreq)), speed=speed,
         )
 
     def streaming_decoder(self, *, threshold: float = 0.9,
@@ -368,15 +409,25 @@ class Predictor:
 
     def performance_note(self) -> dict:
         """What this model actually achieves, for display alongside a result."""
-        within = self.card.evaluation.get("within_subject", {})
-        cross = self.card.evaluation.get("cross_subject", {})
-        accuracy = within.get("mean_accuracy") or cross.get("mean_accuracy") or 0.0
+        def measured(section: dict, key: str) -> float | None:
+            # A missing, corrupt or NaN figure is "not measured", never NaN:
+            # NaN is not valid JSON and would break /api/v1/model and the pages.
+            value = section.get(key)
+            if isinstance(value, bool) or not isinstance(value, int | float):
+                return None
+            return float(value) if math.isfinite(value) else None
+
+        within = self.card.evaluation.get("within_subject", {}) or {}
+        cross = self.card.evaluation.get("cross_subject", {}) or {}
+        within_accuracy = measured(within, "mean_accuracy")
+        cross_accuracy = measured(cross, "mean_accuracy")
+        accuracy = within_accuracy or cross_accuracy or 0.0
         n_classes = max(2, len(self.card.classes))
         trial_seconds = max(0.1, self.card.tmax - self.card.tmin)
         return {
-            "within_subject_accuracy": within.get("mean_accuracy"),
-            "within_subject_std": within.get("std_accuracy"),
-            "cross_subject_accuracy": cross.get("mean_accuracy"),
+            "within_subject_accuracy": within_accuracy,
+            "within_subject_std": measured(within, "std_accuracy"),
+            "cross_subject_accuracy": cross_accuracy,
             "chance_level": self.card.chance_level,
             "itr_bits_per_minute": round(
                 information_transfer_rate(accuracy, n_classes, trial_seconds), 2

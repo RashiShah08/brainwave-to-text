@@ -88,10 +88,16 @@ class EvidenceAccumulator:
             raise ValueError("threshold must lie strictly between 0 and 1")
         if not 0.0 < leak <= 1.0:
             raise ValueError("leak must lie in (0, 1]")
+        min_windows = max(1, min_windows)
+        if max_windows < min_windows:
+            raise ValueError(
+                f"max_windows ({max_windows}) must be at least min_windows "
+                f"({min_windows}), or no decision could ever commit"
+            )
         self.classes = list(classes)
         self.threshold = threshold
         self.max_windows = max_windows
-        self.min_windows = max(1, min_windows)
+        self.min_windows = min_windows
         self.leak = leak
         self.reset()
 
@@ -121,6 +127,10 @@ class EvidenceAccumulator:
             raise ValueError(
                 f"expected {len(self.classes)} probabilities, got {probs.shape}"
             )
+        # Checked before anything is accumulated: np.clip leaves NaN in place,
+        # and one NaN in the log-evidence would poison every later posterior.
+        if not np.isfinite(probs).all():
+            raise ValueError(f"probabilities must be finite, got {probs.tolist()}")
         probs = np.clip(probs, 1e-9, 1.0)
 
         self.log_evidence = self.log_evidence * self.leak + np.log(probs)
@@ -305,9 +315,11 @@ class StreamingDecoder:
     ):
         self.predictor = predictor
         self.classes = list(predictor.card.classes)
+        # A budget smaller than the default minimum (max_windows=1) is a request
+        # to decide on single windows, not for a decoder that can only time out.
         self.accumulator = EvidenceAccumulator(
             self.classes, threshold=threshold, max_windows=max_windows,
-            min_windows=min_windows, leak=leak,
+            min_windows=max(1, min(min_windows, max_windows)), leak=leak,
         )
 
     def run(self, stream: EDFStream,

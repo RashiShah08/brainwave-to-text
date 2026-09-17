@@ -46,7 +46,11 @@ def _load_bundle(args):
 
 
 def _subject_list(value: str | None) -> list[int] | None:
-    """Parse ``1,2,5-9`` into a subject list."""
+    """Parse ``1,2,5-9`` into a subject list.
+
+    A specification that selects nothing is an error here, at the typo, rather
+    than an empty list that fails much later as "no subjects available".
+    """
     if not value:
         return None
     out: list[int] = []
@@ -54,11 +58,18 @@ def _subject_list(value: str | None) -> list[int] | None:
         chunk = chunk.strip()
         if not chunk:
             continue
-        if "-" in chunk:
-            lo, hi = chunk.split("-", 1)
-            out.extend(range(int(lo), int(hi) + 1))
+        lo, dash, hi = chunk.partition("-")
+        if dash:
+            start, stop = int(lo), int(hi)
+            if start > stop:
+                raise ValueError(
+                    f"subject range {chunk!r} runs backwards; write it low-high"
+                )
+            out.extend(range(start, stop + 1))
         else:
             out.append(int(chunk))
+    if not out:
+        raise ValueError(f"subject specification {value!r} selects no subjects")
     return sorted(set(out))
 
 
@@ -516,7 +527,7 @@ def cmd_serve(args) -> int:  # pragma: no cover - long running
     from waitress import serve
 
     from bwt.config import Config
-    from bwt.serving.app import create_app
+    from bwt.serving.app import create_app, waitress_options
 
     config = Config.load()
     if args.model:
@@ -535,7 +546,7 @@ def cmd_serve(args) -> int:  # pragma: no cover - long running
         app.run(host=config.serve.host, port=config.serve.port, debug=False)
     else:
         log.info("serving on http://%s:%d", config.serve.host, config.serve.port)
-        serve(app, host=config.serve.host, port=config.serve.port, threads=4)
+        serve(app, **waitress_options(config))
     return 0
 
 

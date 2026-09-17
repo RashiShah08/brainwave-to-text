@@ -51,3 +51,6 @@ serve:
   max_epochs_per_request: 256
   # Refuse to load a model trained against different library versions.
   strict_versions: false
+  # Server worker threads. Paced (slowed-down) live replays may occupy all but
+  # one of them, so a replay can never lock everyone else out.
+  threads: 4

@@ -261,7 +261,19 @@ def read_standardised_raw(path: Path):
     import mne
     from mne.datasets import eegbci
 
-    raw = mne.io.read_raw_edf(str(path), preload=True, verbose="ERROR")
+    try:
+        raw = mne.io.read_raw_edf(str(path), preload=True, verbose="ERROR")
+    except FileNotFoundError:
+        raise
+    except Exception as exc:
+        # MNE fails on a damaged file in many shapes -- ValueError for a bad
+        # header, IndexError for a header with no data records behind it. All
+        # of them mean the same thing to a caller, and an IndexError would
+        # otherwise surface as a server fault rather than a bad upload.
+        raise ValueError(
+            "the file is not a readable EDF/EDF+ recording: its header or data "
+            "records are damaged or missing"
+        ) from exc
     eegbci.standardize(raw)
     raw.set_montage(mne.channels.make_standard_montage("standard_1005"),
                     on_missing="warn", verbose="ERROR")

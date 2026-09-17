@@ -19,7 +19,7 @@
 
   <!-- Must run before any page script: module scripts execute in document
        order, and content blocks sit above the end of <body>. -->
-  <script type="module">
+  <script type="module" nonce="{{ csp_nonce }}">
     // Resolves once the specimen exists, so pages can drive it without racing
     // the loads. Null when WebGL is unavailable, and null on document pages:
     // the canvas is fixed to the viewport, so on a page whose content is not
@@ -111,7 +111,7 @@
   <!-- A module, so it runs after the head bootstrap that creates
        window.neuralWorld. A classic script here executes during parse, before
        any deferred module, and would find it undefined. -->
-  <script type="module">
+  <script type="module" nonce="{{ csp_nonce }}">
     (function () {
       var card = document.getElementById('region');
       var name = card.querySelector('.callout-name');
@@ -131,7 +131,7 @@
   <!-- Navigation between the two pages. The exit is animated here rather than
        through the cross-document View Transition API, which left the incoming
        document frozen with no frame ever produced. -->
-  <script>
+  <script nonce="{{ csp_nonce }}">
     (function () {
       var nav = document.querySelector('.topbar-meta');
       var mark = nav && nav.querySelector('.navmark');

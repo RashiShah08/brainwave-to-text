@@ -15,6 +15,7 @@ expects.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import platform
 import subprocess
@@ -85,6 +86,9 @@ class ModelCard:
     )
     library_versions: dict[str, str] = field(default_factory=_library_versions)
     git_commit: str | None = field(default_factory=_git_commit)
+    #: SHA-256 of ``pipeline.joblib``, verified before it is unpickled. Empty on
+    #: artifacts saved before the field existed.
+    pipeline_sha256: str = ""
 
     # -- training data --
     n_train_trials: int = 0
@@ -142,6 +146,7 @@ def save_artifact(model, card: ModelCard, path: Path | None = None) -> Path:
     path.mkdir(parents=True, exist_ok=True)
 
     joblib.dump(model, path / PIPELINE_FILE, compress=3)
+    card.pipeline_sha256 = _sha256(path / PIPELINE_FILE)
     (path / CARD_FILE).write_text(
         json.dumps(card.to_dict(), indent=2, sort_keys=False), encoding="utf-8"
     )
@@ -191,9 +196,33 @@ def load_artifact(path: Path | str, *, strict_versions: bool = False):
             raise RuntimeError(f"library version drift for {path.name} -- {message}")
         log.warning("library version drift for %s -- %s", path.name, message)
 
+    # Unpickling runs code, so the weights are checked against the card before
+    # joblib ever opens them: a swapped or corrupted file is refused unread.
+    recorded = card.pipeline_sha256 if isinstance(card.pipeline_sha256, str) else ""
+    recorded = recorded.strip().lower()
+    if recorded:
+        actual = _sha256(path / PIPELINE_FILE)
+        if actual != recorded:
+            raise ValueError(
+                f"{PIPELINE_FILE} in {path.name} does not match the checksum in "
+                "its card; refusing to load weights that are not the ones the "
+                "card describes"
+            )
+    else:
+        log.warning("%s records no pipeline checksum; its weights cannot be "
+                    "verified before loading. Re-save it to add one.", path.name)
+
     model = joblib.load(path / PIPELINE_FILE)
     log.info("loaded %s (%s)", path.name, card.headline())
     return model, card
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def list_artifacts(root: Path | None = None) -> list[tuple[Path, ModelCard]]:

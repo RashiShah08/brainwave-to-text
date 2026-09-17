@@ -26,6 +26,9 @@ def information_transfer_rate(
     distinguishable commands. Returns 0 when accuracy is at or below chance,
     where the formula is not meaningful.
     """
+    # NaN slips through every comparison below, so it is refused explicitly.
+    if not (math.isfinite(accuracy) and math.isfinite(seconds_per_trial)):
+        return 0.0
     if n_classes < 2 or seconds_per_trial <= 0:
         return 0.0
     accuracy = min(max(accuracy, 0.0), 1.0)

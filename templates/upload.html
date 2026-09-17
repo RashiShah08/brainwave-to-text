@@ -14,15 +14,18 @@
   <section class="card">
     <h2>Recording</h2>
     <form id="form" method="POST" action="{{ url_for('predict_form') }}"
-          enctype="multipart/form-data">
+          enctype="multipart/form-data" data-max-mb="{{ max_upload_mb }}">
       <label class="drop" id="zone" for="file">
         <b>Choose an .edf file</b>
-        <em>{{ model.n_channels }} channels &middot; {{ '%g' % model.sfreq }} Hz &middot; max 64 MB</em>
+        <em>{{ model.n_channels }} channels &middot; {{ '%g' % model.sfreq }} Hz &middot; max {{ max_upload_mb }} MB</em>
         <span class="file" id="filename"></span>
         <input type="file" id="file" name="file" accept=".edf" required />
       </label>
       <div class="btns" style="margin-top:12px">
-        <button class="btn" id="submit" type="submit" disabled>Decode</button>
+        {# Enabled in the markup: the script disables it until a file is
+           chosen, and without JavaScript the form must still submit (the
+           input's `required` stops an empty one). #}
+        <button class="btn" id="submit" type="submit">Decode</button>
         <span></span>
       </div>
       <div class="status" id="status">Processed in memory and deleted immediately.</div>
@@ -144,7 +147,7 @@
   </div>
 </div>
 
-<script>
+<script nonce="{{ csp_nonce }}">
   (function () {
     var input = document.getElementById('file');
     var zone = document.getElementById('zone');
@@ -152,10 +155,23 @@
     var submit = document.getElementById('submit');
     var form = document.getElementById('form');
     var overlay = document.getElementById('overlay');
+    var status = document.getElementById('status');
+    var idleStatus = status.textContent;
+    var limitMb = parseFloat(form.dataset.maxMb) || Infinity;
 
     function show(file) {
+      status.textContent = idleStatus;
+      status.classList.remove('is-bad');
       if (!file) { name.textContent = ''; submit.disabled = true; return; }
       name.textContent = file.name + '  (' + (file.size / 1048576).toFixed(1) + ' MB)';
+      if (file.size > limitMb * 1048576) {
+        // Refused before sending, rather than after uploading all of it only
+        // to be told no.
+        status.textContent = 'This file is over the ' + limitMb + ' MB upload limit.';
+        status.classList.add('is-bad');
+        submit.disabled = true;
+        return;
+      }
       submit.disabled = false;
     }
     input.addEventListener('change', function () { show(input.files[0]); });
@@ -181,6 +197,17 @@
       overlay.hidden = false;
       submit.disabled = true;
     });
+
+    // Coming Back to this page, the browser restores the chosen file into the
+    // input without firing 'change' (and choosing the same file again fires
+    // none either), or restores the whole page from the back/forward cache
+    // with the decoding veil still up. Read the form as it actually is.
+    function sync() {
+      overlay.hidden = true;
+      show(input.files[0]);
+    }
+    sync();
+    addEventListener('pageshow', sync);
   })();
 </script>
 {% endblock %}
