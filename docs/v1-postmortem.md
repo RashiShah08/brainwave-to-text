@@ -1,10 +1,13 @@
-# Legacy (v1) code — archived, not runnable
+# v1 post-mortem
 
-These are the original scripts, kept for reference. They are **not** part of the
-v2 system and are not maintained. Nothing imports them.
+The original scripts were removed from the working tree once v2 had replaced
+every one of them. They were never runnable (every path was hardcoded to a
+directory that no longer existed) and nothing imported them. They remain in git
+history; `git log --diff-filter=D --stat -- legacy/` finds the commit that
+removed them, and `git show <commit>^:legacy/<file>` prints any one of them.
 
-They are preserved because the defects in them are the reason v2 is shaped the
-way it is, and because the reasoning is worth keeping next to the code.
+What is kept here is the reasoning, because the defects in v1 are the reason v2
+is shaped the way it is.
 
 ## Why they were replaced
 
@@ -20,17 +23,16 @@ way it is, and because the reasoning is worth keeping next to the code.
 
 ## The numbers
 
-The saved confusion matrices are unambiguous. On the genuinely held-out 20%
-(`models/confusion_matrix.png`): **72.07%** accuracy against a **67.93%**
-majority-class baseline, with **28.5%** recall on class 1. On the full dataset
-(`models/confusion_matrix_test.png`): 94.30%.
+v1's saved confusion matrices were unambiguous. On the genuinely held-out 20%:
+**72.07%** accuracy against a **67.93%** majority-class baseline, with **28.5%**
+recall on class 1. On the full dataset: 94.30%.
 
 Subtracting the two shows 19 errors across 13,717 training rows (99.86%) versus
 958 across 3,430 held-out rows (72.07%) — a 28-point generalisation gap.
 
 ## Superseded data files
 
-`../processed_data/` (~700 MB of CSVs) and `../models/` (a 79 MB pickle plus
-figures) are outputs of this pipeline. They are git-ignored and kept only so the
-old results remain auditable. Nothing in v2 reads them, and they can be deleted
-without affecting anything.
+v1's outputs — `processed_data/` (~700 MB of feature CSVs) and `models/` (a
+79 MB pickle and the two confusion-matrix figures quoted above) — were never
+committed and have since been deleted. Nothing in v2 read them. The figures
+above are the record of what they contained.

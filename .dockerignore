@@ -16,13 +16,8 @@ htmlcov/
 # 3.5 GB of EDF has no business in a production image
 raw_data/
 cache/
-processed_data/
-models/
 reports/
 uploads/
-
-# Superseded v1 code
-legacy/
 
 tests/
 docs/
