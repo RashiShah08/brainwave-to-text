@@ -7,7 +7,7 @@ name = "bwt"
 version = "3.0.0"
 description = "An EEG motor-imagery decoder: which imagined movement, and nothing else"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = "MIT"
 authors = [{ name = "Rashi Shah" }]
 keywords = ["eeg", "bci", "motor-imagery", "csp", "riemannian"]
@@ -46,6 +46,11 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
+# Both spellings the suite uses: `from tests.conftest import ...` needs the
+# repository root, `import _factories` needs the tests directory. Without
+# these, a bare `pytest` fails to import where `python -m pytest` succeeds,
+# because only the latter puts the working directory on the path.
+pythonpath = [".", "tests"]
 markers = [
     "slow: marks tests that touch the real dataset (deselect with '-m \"not slow\"')",
     "e2e: browser tests driven by Playwright (run with '-m e2e'; needs chromium)",
@@ -54,7 +59,7 @@ filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py311"
+target-version = "py312"
 src = ["src", "tests"]
 
 [tool.ruff.lint]

@@ -28,6 +28,7 @@ import time
 
 import pytest
 import requests
+from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 import _factories as fx
 
@@ -160,12 +161,30 @@ def assert_no_broken_text(page):
     assert not hits, f"broken values rendered: {hits}"
 
 
+def click_enabled(page, selector, timeout=30_000):
+    """Click a control once it is enabled, saying so when it never is.
+
+    A plain click on a disabled button only reports that the click timed out,
+    which leaves it unclear whether the page was slow or never armed the
+    control at all. This separates the two.
+    """
+    try:
+        page.wait_for_function("s => !document.querySelector(s).disabled",
+                               arg=selector, timeout=timeout)
+    except PlaywrightTimeout:
+        raise AssertionError(
+            f"{selector} was still disabled after {timeout} ms; "
+            f"status={text_of(page, '#status')!r} state={text_of(page, '#ov-status')!r}"
+        ) from None
+    page.click(selector)
+
+
 def start_run(page, path, *, speed="0", step="0.5", threshold="0.9"):
     page.set_input_files("#file", str(path))
     page.select_option("#speed", speed)
     page.select_option("#step", step)
     page.select_option("#threshold", threshold)
-    page.click("#start")
+    click_enabled(page, "#start")
 
 
 def wait_for_state(page, state, timeout=RUN_TIMEOUT):
@@ -853,17 +872,16 @@ class TestHardenedLivePage:
 
     def test_the_real_replay_budget_refusal_reaches_the_page_and_recovers(
             self, page, server, recordings):
-        held = []
+        # The budget is taken directly rather than by holding real replays
+        # open: how long a held replay lasts depends on the machine, so that
+        # version passed here and failed on CI, where the holders had finished
+        # before the page ever asked. The semaphore is the thing under test.
+        slots = server.app.extensions["bwt_replay_slots"]
+        held = 0
+        while slots.acquire(blocking=False):
+            held += 1
+        assert held, "the server has no replay budget to exhaust"
         try:
-            # The suite server's budget is three paced replays; take all three.
-            for _ in range(3):
-                fh = open(recordings["good"], "rb")  # noqa: SIM115 - held open on purpose
-                response = requests.post(server.url + "/api/v1/stream?speed=0.25",
-                                         files={"file": fh}, timeout=60, stream=True)
-                assert response.status_code == 200
-                next(response.iter_lines())
-                held.append((fh, response))
-
             goto_live(page, server)
             start_run(page, recordings["short"], speed="10")
             page.wait_for_function("() => " "!document.getElementById('start').disabled",
@@ -871,23 +889,12 @@ class TestHardenedLivePage:
             assert "paced replays" in text_of(page, "#status")
             assert text_of(page, "#ov-status") == "error"
         finally:
-            for fh, response in held:
-                response.close()
-                fh.close()
+            for _ in range(held):
+                slots.release()
 
-        # The server notices the hang-ups on its next paced write and gives the
-        # slots back; a paced run then goes through.
-        deadline = time.time() + 30
-        while True:
-            page.click("#start")
-            page.wait_for_function(
-                "() => " "['finished', 'error'].includes("
-                "document.getElementById('ov-status').textContent)",
-                timeout=RUN_TIMEOUT)
-            if text_of(page, "#ov-status") == "finished" or time.time() > deadline:
-                break
-            page.wait_for_timeout(1000)
-        assert text_of(page, "#ov-status") == "finished"
+        # With the budget back, the same paced run goes through.
+        page.click("#start")
+        wait_for_state(page, "finished")
         assert not page.eval_on_selector("#status", "e => e.classList.contains('is-bad')")
 
     def test_a_stopped_run_that_settles_late_cannot_release_the_next_run(
@@ -909,7 +916,7 @@ class TestHardenedLivePage:
         try:
             goto_live(page, server)
             start_run(page, recordings["short"])
-            page.click("#stop")
+            click_enabled(page, "#stop")
             start_run(page, recordings["good"], speed="1")
             page.wait_for_function(
                 "() => " "+document.getElementById('m-windows').textContent > 0",
@@ -919,7 +926,7 @@ class TestHardenedLivePage:
             assert page.eval_on_selector("#stop", "e => !e.disabled")
             assert text_of(page, "#status") != "connection failed"
             assert text_of(page, "#ov-status") == "decoding"
-            page.click("#stop")
+            click_enabled(page, "#stop")
             assert page.errors == []
         finally:
             context.close()

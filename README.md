@@ -535,7 +535,7 @@ make coverage
 ```
 
 `make help` lists every target. CI (`.github/workflows/ci.yml`) runs the
-hermetic suite on Linux and Windows across Python 3.11 and 3.12, plus a
+hermetic suite on Linux and Windows across Python 3.12 and 3.13, plus a
 CPU-PyTorch job for the neural pipelines, a ruff check, and a Docker build.
 Release history and the reasoning behind each change is in
 [CHANGELOG.md](CHANGELOG.md).
