@@ -323,6 +323,22 @@ class — because results from a single recording rig are always suspect.
 `eegmmidb` is read from local EDF files under `raw_data/` (override with
 `$BWT_RAW_DATA`). `bnci2a` is fetched through MOABB on first use.
 
+**Getting the recordings.** `raw_data/` (3.4 GB, 109 subjects) is stored in
+this repository through [Git LFS](https://git-lfs.com), so a clone brings it
+back:
+
+```bash
+git lfs install        # once per machine
+git clone https://github.com/RashiShah08/brainwave-to-text.git
+# or, in a clone made without LFS:
+git lfs pull
+bwt verify-data        # checks every file against PhysioNet's SHA-256 manifest
+```
+
+To fetch only what you need, `git lfs pull --include "raw_data/S001/*"`. The
+canonical source is PhysioNet, <https://physionet.org/content/eegmmidb/1.0.0/>,
+if this copy is ever unavailable.
+
 ### The EEGMMIDB protocol, stated explicitly
 
 The largest defect in this project's first version was a misreading of the

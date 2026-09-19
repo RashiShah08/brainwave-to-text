@@ -14,8 +14,8 @@ dist/
 htmlcov/
 .ipynb_checkpoints/
 
-# Raw dataset — 3.5 GB, fetch with `bwt fetch-data` instead of committing
-raw_data/
+# Raw dataset: kept in git through Git LFS (see .gitattributes), so a clone
+# restores it with `git lfs pull`. Its canonical source is PhysioNet.
 
 # Derived artifacts — reproducible from raw data, never commit
 cache/
