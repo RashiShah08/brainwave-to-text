@@ -1074,8 +1074,9 @@ class TestSecurityAndAccessibility:
     def test_pages_are_served_under_the_policy_and_nothing_trips_it(
             self, page, server, recordings):
         response = page.goto(server.url + "/", wait_until="networkidle")
-        assert "'nonce-" in response.headers["content-security-policy"]
-        assert response.headers["x-frame-options"] == "DENY"
+        policy = response.headers["content-security-policy"]
+        assert "'nonce-" in policy
+        assert "frame-ancestors https: http://localhost:5173" in policy
         page.set_input_files("#file", str(recordings["short"]))
         page.click("#submit")
         page.wait_for_url("**/predict", timeout=RUN_TIMEOUT)
