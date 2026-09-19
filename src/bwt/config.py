@@ -53,6 +53,10 @@ class ServeConfig:
     #: Server worker threads. Paced live replays may occupy all but one of
     #: them, so a slow replay can never lock everyone else out.
     threads: int = 4
+    #: Sites that may show these pages in a frame (CSP ``frame-ancestors``),
+    #: such as a portfolio's live preview. Every page is public and there are no
+    #: accounts, so framing exposes nothing; ``'none'`` blocks it everywhere.
+    frame_ancestors: str = "https: http://localhost:5173"
 
 
 @dataclass

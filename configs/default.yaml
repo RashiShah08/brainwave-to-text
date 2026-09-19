@@ -54,3 +54,7 @@ serve:
   # Server worker threads. Paced (slowed-down) live replays may occupy all but
   # one of them, so a replay can never lock everyone else out.
   threads: 4
+  # Sites allowed to show these pages in a frame (CSP frame-ancestors), such as
+  # a portfolio's live preview. Every page is public and there are no accounts,
+  # so this exposes nothing; "'none'" blocks framing everywhere.
+  frame_ancestors: "https: http://localhost:5173"

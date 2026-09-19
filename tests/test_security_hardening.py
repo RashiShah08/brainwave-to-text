@@ -125,11 +125,10 @@ class TestSecurityHeaders:
         for name, response in _responses(client, edf, app):
             headers = response.headers
             assert headers.get("X-Content-Type-Options") == "nosniff", name
-            assert headers.get("X-Frame-Options") == "DENY", name
             assert headers.get("Referrer-Policy") == "no-referrer", name
             policy = headers.get("Content-Security-Policy", "")
             for directive in ("default-src 'self'", "object-src 'none'",
-                              "base-uri 'none'", "frame-ancestors 'none'",
+                              "base-uri 'none'", "frame-ancestors https: http://localhost:5173",
                               "form-action 'self'"):
                 assert directive in policy, (name, directive)
             script_src = re.search(r"script-src ([^;]+)", policy).group(1)
@@ -146,8 +145,22 @@ class TestSecurityHeaders:
                             lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")))
         response = upload(app.test_client(), edf)
         assert response.status_code == 500
-        assert response.headers.get("X-Frame-Options") == "DENY"
-        assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
+        assert "frame-ancestors https: http://localhost:5173" in response.headers["Content-Security-Policy"]
+        assert response.headers.get("X-Content-Type-Options") == "nosniff"
+
+    @pytest.mark.parametrize("setting", ["'none'", "", "  "])
+    def test_framing_can_be_turned_off(self, artifact, setting, edf):
+        app = fx.make_app(artifact, frame_ancestors=setting)
+        for name, response in _responses(app.test_client(), edf, app):
+            assert response.headers.get("X-Frame-Options") == "DENY", name
+            assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"], name
+            response.close()
+
+    def test_allowed_sites_never_get_the_deny_header(self, client, edf, app):
+        # X-Frame-Options: DENY would override the allow-list in older browsers.
+        for name, response in _responses(client, edf, app):
+            assert "X-Frame-Options" not in response.headers, name
+            response.close()
 
     @pytest.mark.parametrize("path", ["/", "/live"])
     def test_every_inline_script_carries_this_responses_nonce(self, client, path):

@@ -185,7 +185,7 @@ def build_artifact(
 
 
 def make_app(artifact: Path, *, max_upload_mb: int = 64, max_epochs: int = 256,
-             threads: int = 4):
+             threads: int = 4, frame_ancestors: str | None = None):
     """The production application factory, bound to a synthetic artifact.
 
     ``threads`` is the configured worker pool, which sizes the paced-replay
@@ -199,6 +199,8 @@ def make_app(artifact: Path, *, max_upload_mb: int = 64, max_epochs: int = 256,
     config.serve.max_upload_mb = max_upload_mb
     config.serve.max_epochs_per_request = max_epochs
     config.serve.threads = threads
+    if frame_ancestors is not None:
+        config.serve.frame_ancestors = frame_ancestors
     predictor = Predictor.load(artifact, max_epochs=max_epochs)
     return create_app(config, predictor=predictor)
 

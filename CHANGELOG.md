@@ -9,6 +9,11 @@ motor-imagery number without its protocol is meaningless.
 
 ### Security
 
+- **Framing allowed for a portfolio preview.** `serve.frame_ancestors`
+  (`BWT_SERVE_FRAME_ANCESTORS`) lists the sites that may show the pages in a
+  frame, defaulting to HTTPS sites and `http://localhost:5173`. Every page is
+  public and there are no accounts, so framing exposes nothing. `'none'` or an
+  empty value restores `frame-ancestors 'none'` and `X-Frame-Options: DENY`.
 - **Content-Security-Policy with a per-response nonce** on every response, plus
   `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
   `Referrer-Policy: no-referrer` and `Cross-Origin-Opener-Policy`. Inline

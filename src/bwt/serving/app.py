@@ -55,6 +55,7 @@ def create_app(config: Config | None = None, predictor: Predictor | None = None)
     )
     app.config.update(
         MAX_CONTENT_LENGTH=config.serve.max_upload_mb * 1024 * 1024,
+        FRAME_ANCESTORS=config.serve.frame_ancestors.strip() or "'none'",
         JSON_SORT_KEYS=False,
         PROPAGATE_EXCEPTIONS=False,
     )
@@ -393,7 +394,8 @@ TRACE_CHANNELS = ("FC5", "C5", "CP5", "FCz", "Cz", "CPz", "FC6", "C6", "CP6")
 
 
 #: Scripts only from this origin or carrying the per-response nonce; no eval,
-#: no plugins, no framing, no <base> rewriting, forms post only back here.
+#: no plugins, framing only by the configured sites, no <base> rewriting, forms
+#: post only back here.
 #: Inline style attributes are allowed: they cannot execute anything.
 CONTENT_SECURITY_POLICY = (
     "default-src 'self'; "
@@ -404,7 +406,7 @@ CONTENT_SECURITY_POLICY = (
     "worker-src 'self' blob:; "
     "object-src 'none'; "
     "base-uri 'none'; "
-    "frame-ancestors 'none'; "
+    "frame-ancestors {frame_ancestors}; "
     "form-action 'self'"
 )
 
@@ -412,10 +414,13 @@ CONTENT_SECURITY_POLICY = (
 def _apply_security_headers(response) -> None:
     nonce = getattr(g, "csp_nonce", None) or secrets.token_urlsafe(18)
     headers = response.headers
+    frame_ancestors = current_app.config.get("FRAME_ANCESTORS", "'none'")
     headers.setdefault("Content-Security-Policy",
-                       CONTENT_SECURITY_POLICY.format(nonce=nonce))
+                       CONTENT_SECURITY_POLICY.format(nonce=nonce, frame_ancestors=frame_ancestors))
     headers.setdefault("X-Content-Type-Options", "nosniff")
-    headers.setdefault("X-Frame-Options", "DENY")
+    if frame_ancestors == "'none'":
+        # X-Frame-Options cannot name sites, so it is only sent when nothing may frame us.
+        headers.setdefault("X-Frame-Options", "DENY")
     headers.setdefault("Referrer-Policy", "no-referrer")
     headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
     if request.path.startswith("/api/"):
