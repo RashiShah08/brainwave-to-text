@@ -1,0 +1,44 @@
+# Render Blueprint: the site on Render's free plan, straight from this repo.
+#
+# The native Python runtime rather than the Dockerfile: the free plan is the
+# same either way, and this path needs nothing but a connected GitHub account.
+#
+# The free instance has 512 MB. The server needs about 230 MB without PyTorch,
+# which requirements.txt deliberately leaves out; pyriemann imports PyTorch
+# whenever it is installed, and that alone costs another ~500 MB.
+#
+# The limits below are set by measurement, not taste. Decoding holds several
+# copies of the signal in memory, so an upload's cost scales with its size:
+# at the default 64 MB limit one maximum upload peaked near 1 GB, which let
+# anyone take the site down with a single request. At 6 MB, three maximum
+# uploads decoding at once stay under 480 MB. The largest recording in
+# EEGMMIDB is 3.6 MB, so every real file still fits.
+services:
+  - name: brainwave-to-text
+    type: web
+    runtime: python
+    plan: free
+    region: oregon
+    # Not main: main carries the 3.4 GB corpus in Git LFS, and Render fetches
+    # LFS files on every clone. .github/workflows/deploy-branch.yml keeps this
+    # branch equal to main without raw_data/.
+    branch: deploy
+    buildCommand: pip install -r requirements.txt && pip install --no-deps .
+    startCommand: bwt serve --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    autoDeployTrigger: commit
+    envVars:
+      - key: BWT_SERVE_THREADS
+        value: "3"
+      - key: BWT_SERVE_MAX_UPLOAD_MB
+        value: "6"
+      - key: BWT_LOG_FORMAT
+        value: json
+      # A tenth of a CPU: numerical libraries must not spawn a thread pool
+      # sized for a machine this is not.
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: OPENBLAS_NUM_THREADS
+        value: "1"
+      - key: MKL_NUM_THREADS
+        value: "1"
