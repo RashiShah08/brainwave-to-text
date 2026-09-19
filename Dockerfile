@@ -27,7 +27,10 @@ COPY configs/ ./configs/
 RUN pip install --no-cache-dir --no-deps . \
     && python -c "import bwt; print('bwt', bwt.__version__)"
 
-# Mount a trained artifact here:  -v $(pwd)/artifacts:/app/artifacts:ro
+# The served model is baked in, so the image runs on a host that can mount
+# nothing (a Hugging Face Space, for one). Mounting a directory over
+# /app/artifacts still replaces it:  -v $(pwd)/artifacts:/app/artifacts:ro
+COPY artifacts/ ./artifacts/
 VOLUME ["/app/artifacts"]
 
 RUN useradd --create-home --uid 10001 bwt && chown -R bwt:bwt /app

@@ -19,7 +19,11 @@ htmlcov/
 
 # Derived artifacts — reproducible from raw data, never commit
 cache/
-artifacts/
+artifacts/*
+# ...except the model the site serves (configs/default.yaml, serve.model):
+# 170 KB, and a deployment built from this repository has nothing to serve
+# without it. It carries its own SHA-256, checked before it is loaded.
+!artifacts/mi_four_class__riemann_ts_aligned/
 reports/
 uploads/
 
