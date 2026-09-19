@@ -13,6 +13,7 @@ import io
 import json
 import threading
 import time
+import warnings
 
 import numpy as np
 import pytest
@@ -79,7 +80,11 @@ class TestChannelNaming:
                                                                     workdir):
         names = list(EEGBCI_CHANNELS)
         names[names.index("C4")] = "C3"
-        with pytest.warns(RuntimeWarning, match="not unique"):
+        # MNE may warn about the duplicate while *writing* this file. That is
+        # the fixture, not the server: it warned on one machine and not on
+        # another with the same MNE version, so it is not asserted.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
             path = fx.write_edf(workdir / "duplicate.edf", duration=20.0, ch_names=names)
         body = post(client, path).get_json()
         assert body["error"] == "input_contract"

@@ -8,7 +8,9 @@ from sklearn.base import clone
 from sklearn.exceptions import NotFittedError
 from tests.conftest import make_epochs
 
+from bwt.deep import torch_available
 from bwt.pipelines import (
+    DEEP_PIPELINES,
     REGISTRY,
     BandpassFilter,
     FilterBank,
@@ -84,7 +86,16 @@ class TestFilterBank:
         np.testing.assert_allclose(a, b, rtol=1e-10)
 
 
-@pytest.mark.parametrize("name", sorted(REGISTRY))
+# The neural pipelines need PyTorch, an optional dependency the main CI jobs
+# deliberately do not install; the CPU-torch job runs them. Skipped, not
+# failed, without it, as the README promises.
+_NEEDS_TORCH = pytest.mark.skipif(not torch_available(), reason="PyTorch not installed")
+
+
+@pytest.mark.parametrize("name", [
+    pytest.param(name, marks=_NEEDS_TORCH) if name in DEEP_PIPELINES else name
+    for name in sorted(REGISTRY)
+])
 class TestEveryPipeline:
     def test_fits_and_predicts(self, name):
         X, y = make_epochs(n_per_class=16, n_channels=16)

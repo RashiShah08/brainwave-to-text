@@ -906,9 +906,12 @@ class TestHardenedLivePage:
           window.fetch = (url, options) => {
             if (String(url).includes('/api/v1/stream') && ++calls === 1) {
               // Ignores its abort signal and fails late, like a network error
-              // that arrives after the user has already moved on.
-              return new Promise((_, reject) => setTimeout(
-                () => reject(new TypeError('late failure')), 1500));
+              // that arrives after the user has already moved on. The test
+              // decides when: a timer here raced the test's own clicks, and
+              // on a slow machine fired before Stop could be pressed.
+              return new Promise((_, reject) => {
+                window.__failFirstRun = () => reject(new TypeError('late failure'));
+              });
             }
             return real(url, options);
           };
@@ -921,7 +924,8 @@ class TestHardenedLivePage:
             page.wait_for_function(
                 "() => " "+document.getElementById('m-windows').textContent > 0",
                 timeout=60_000)
-            page.wait_for_timeout(2500)  # the first run's late failure has fired
+            page.evaluate("() => window.__failFirstRun()")  # the first run fails now
+            page.wait_for_timeout(500)  # let its rejection handlers run
             assert page.eval_on_selector("#start", "e => e.disabled")
             assert page.eval_on_selector("#stop", "e => !e.disabled")
             assert text_of(page, "#status") != "connection failed"
