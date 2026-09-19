@@ -1,5 +1,11 @@
 # EEG motor-imagery decoder
 
+**Live demo: <https://brainwave-to-text.onrender.com>** — upload a recording from
+`raw_data/` (e.g. `S001/S001R04.edf`), or open `/live` to watch it decode.
+Hosted on Render's free plan, so the first visit after 15 idle minutes takes
+about a minute to wake it; uploads there are limited to 6 MB (see
+`render.yaml`).
+
 Built on the PhysioNet EEG Motor Movement/Imagery Database (EEGMMIDB) and BCI
 Competition IV-2a.
 
