@@ -1,0 +1,100 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bwt"
+version = "3.0.0"
+description = "An EEG motor-imagery decoder: which imagined movement, and nothing else"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{ name = "Rashi Shah" }]
+keywords = ["eeg", "bci", "motor-imagery", "csp", "riemannian"]
+
+dependencies = [
+    "numpy>=2.1",
+    "scipy>=1.14",
+    "scikit-learn>=1.6",
+    "pandas>=2.2",
+    "mne>=1.8",
+    "pyriemann>=0.7",
+    "joblib>=1.4",
+    "matplotlib>=3.9",
+    "PyYAML>=6.0",
+    "flask>=3.0",
+    "waitress>=3.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "edfio>=0.4"]
+# Only needed to re-bake static/cortex.bin from fsaverage; the baked mesh is
+# committed, so running or serving the app does not require this.
+cortex = ["nibabel>=5.0"]
+# Neural pipelines. Install from PyTorch's own index for CUDA builds.
+deep = ["torch>=2.4"]
+# Second dataset (BCI Competition IV-2a).
+datasets = ["moabb>=1.5"]
+all = ["torch>=2.4", "moabb>=1.5", "pytest>=8.0", "pytest-cov>=5.0", "edfio>=0.4"]
+
+[project.scripts]
+bwt = "bwt.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+# Both spellings the suite uses: `from tests.conftest import ...` needs the
+# repository root, `import _factories` needs the tests directory. Without
+# these, a bare `pytest` fails to import where `python -m pytest` succeeds,
+# because only the latter puts the working directory on the path.
+pythonpath = [".", "tests"]
+markers = [
+    "slow: marks tests that touch the real dataset (deselect with '-m \"not slow\"')",
+    "e2e: browser tests driven by Playwright (run with '-m e2e'; needs chromium)",
+]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # import ordering
+    "B",        # bugbear
+    "UP",       # pyupgrade
+    "C4",       # comprehensions
+    "SIM",      # simplification
+    "RUF",      # ruff-specific
+]
+ignore = [
+    "E501",    # line length is handled by the formatter, not enforced here
+    "B008",    # function call in default arg: intentional for factory defaults
+    "SIM108",  # ternaries are not always clearer than if/else
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests import inside functions deliberately, to keep optional dependencies
+# (torch, moabb) from being imported at collection time.
+"tests/*" = ["E402", "F401"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["bwt"]
+
+[tool.coverage.run]
+source = ["src/bwt"]
+omit = ["*/serving/app.py"]  # exercised through the Flask test client
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]

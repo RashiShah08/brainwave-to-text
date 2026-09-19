@@ -1,0 +1,657 @@
+# EEG motor-imagery decoder
+
+**Live demo: <https://brainwave-to-text.onrender.com>** — upload a recording from
+`raw_data/` (e.g. `S001/S001R04.edf`), or open `/live` to watch it decode.
+Hosted on Render's free plan, so the first visit after 15 idle minutes takes
+about a minute to wake it; uploads there are limited to 6 MB (see
+`render.yaml`).
+
+Built on the PhysioNet EEG Motor Movement/Imagery Database (EEGMMIDB) and BCI
+Competition IV-2a.
+
+The system classifies **imagined movements** from scalp EEG. It offers classical
+(CSP, Riemannian) and neural (EEGNet, ShallowConvNet, EEG-Conformer) decoders
+behind one interface, per-user calibration, continuous decoding with evidence
+accumulation, and tools to check that the model is using real sensorimotor
+physiology rather than artifacts.
+
+> **What this is not.** It does not read words, inner speech, or intent from the
+> brain. No scalp-EEG system does. The output is *which movement was imagined*,
+> and nothing else.
+>
+> Earlier versions drove a character-selection interface with the decoded
+> commands, which is how real assistive spellers work. That has been removed.
+> The spelling was a selection interface bolted onto the classifier rather than
+> anything decoded from the signal, and putting letters on screen next to a
+> brain invited precisely the reading the paragraph above denies.
+
+---
+
+## Results
+
+Task `mi_left_right` — imagined left fist vs imagined right fist, runs 4/8/12,
+105 subjects, 4,722 trials, 64 channels @ 160 Hz, 0.5–3.5 s post-cue.
+Chance = 50.0%. Full record in `reports/benchmark_v3.json`.
+
+| Pipeline | Type | Within-subject | Cross-subject | κ (cross) |
+|---|---|---|---|---|
+| `shallownet` | neural | 0.515 ± 0.095 | **0.640 ± 0.022** | 0.280 |
+| `conformer` | neural | 0.579 ± 0.125 | 0.639 ± 0.027 | 0.277 |
+| `eegnet` | neural | 0.526 ± 0.087 | 0.628 ± 0.027 | 0.256 |
+| `csp_lda` | classical | 0.606 ± 0.174 | 0.611 ± 0.023 | 0.222 |
+| `fb_riemann_ts` | classical | 0.593 ± 0.137 | 0.609 ± 0.006 | 0.219 |
+| `riemann_ts_aligned` | classical | **0.631 ± 0.161** | 0.580 ± 0.007 | 0.161 |
+| `riemann_ts` | classical | 0.626 ± 0.155 | 0.578 ± 0.015 | 0.156 |
+| `fbcsp_lda` | classical | 0.559 ± 0.113 | 0.563 ± 0.010 | 0.126 |
+| `bandpower_rf` | classical | 0.538 ± 0.106 | 0.536 ± 0.009 | 0.072 |
+
+Every cell is measured. Regenerate any of them with
+`bwt benchmark --pipelines <name> --protocols <protocol>`; the run checkpoints
+each fold, so it can be interrupted and resumed.
+
+**These scores are not chance.** A 30-iteration permutation test — labels
+shuffled *within* each subject, preserving group structure, then the full
+cross-validation re-run each time — puts the null distribution at
+**0.5008 ± 0.005** with a maximum of 0.5110 across all thirty runs. Not one
+reached the observed 0.6110, giving **p = 0.032**.
+
+That is the check that exposes leakage. If subject identity or a timing artifact
+were bleeding across folds, shuffled labels would still score above chance
+because the model would latch onto the leak. Instead it recovers exactly
+nothing. Reproduce with `bwt evaluate --pipeline csp_lda --protocols
+cross_subject --permutations 30`.
+
+The top three are **neural and statistically indistinguishable**: ShallowConvNet
+0.640 (95% CI 0.621–0.660) and Conformer 0.639 (0.615–0.662) overlap almost
+entirely, and EEGNet's 0.628 sits inside both intervals. Treat them as a tier,
+not a ranking — the honest statement is that all three beat the best classical
+pipeline by 2–3 points, not that ShallowConvNet is "the winner" by 0.001.
+
+One classical result is worth noting on its own: **the filter bank is what makes
+the Riemannian approach transfer between people.** Single-band tangent space
+reaches only 0.578 cross-subject, and per-recording recentring barely helps
+(0.580) — but computing tangent-space features per sub-band and concatenating
+them jumps to 0.609, level with CSP+LDA and with the tightest confidence
+interval of any pipeline here (±0.006). The within-subject ordering is the
+reverse, where the single-band version wins (0.626 vs 0.593), because the
+filter bank's extra parameters cannot be fitted from ~36 trials.
+
+**The two columns invert, and that is the most useful thing in the table.**
+ShallowConvNet is simultaneously the **best** cross-subject model (0.640) and
+the **worst** within-subject one (0.515 — a coin flip), a swing of 12.5 points
+from the same architecture on the same data. EEGNet does the same thing (0.628
+against 0.526), while `riemann_ts_aligned` runs the other way entirely.
+
+The exception is instructive: **EEG-Conformer degrades far less** (0.579
+within-subject against ShallowConvNet's 0.515), despite being the largest model
+here at 184k parameters. Capacity is evidently not what governs small-sample
+behaviour — regularisation is. The Conformer carries dropout 0.3 throughout, ten
+times the weight decay of the other two, and pools over attention outputs rather
+than flattening a wide feature map into a dense layer. Its ±0.125 spread is also
+the widest of any pipeline, meaning it helps some subjects considerably and
+others not at all.
+
+The reason is data volume per fit. Within-subject training sees ~36 trials, far
+below what a convolutional network needs, whereas the classical pipelines encode
+a strong prior — band-limited spatial covariance — that survives tiny samples.
+Pooled across 105 subjects the networks finally have enough data and overtake
+them. ShallowConvNet wins because its architecture *is* that same prior made
+learnable: temporal convolution, spatial convolution, square, average-pool, log
+— exactly the log-band-power computation CSP hands to its classifier, but with
+the filters fitted rather than fixed.
+
+The practical reading: **use a neural model when serving strangers, a Riemannian
+one when you can calibrate on the user.** That is also why calibration
+fine-tunes a population model rather than training per subject from scratch.
+
+**`csp_lda` remains the default despite `shallownet` being more accurate.** A
+default has to work on a bare install, and PyTorch is optional here — defaulting
+to a neural pipeline would make `bwt train` fail for anyone who skipped a 2 GB
+CUDA download. CSP+LDA needs no GPU, trains in seconds, and gives up about three
+points. Choose deliberately:
+
+| Situation | Pipeline | Accuracy |
+|---|---|---|
+| Serving strangers, PyTorch available | `shallownet` | 0.640 cross-subject |
+| Serving strangers, no PyTorch | `csp_lda` | 0.611 cross-subject |
+| Calibrated on the end user | `riemann_ts_aligned` | 0.631 within-subject |
+
+```bash
+bwt train --pipeline shallownet
+```
+
+**The two columns answer different questions.**
+
+- **Within-subject** is what a user gets once the system is calibrated on their
+  own recordings. Each subject is cross-validated against themselves and the
+  figure is the mean over 105 subjects. The ±0.17 spread matters more than the
+  mean: individuals range from ~0.36 to ~0.98. A substantial minority of people
+  cannot drive a motor-imagery BCI at all — a documented property of the
+  paradigm, not a defect here.
+- **Cross-subject** holds out whole subjects, so nothing about the test person is
+  seen in training. Its tight spread reflects averaging over many people at once.
+
+These figures match the published literature for this dataset and contrast.
+**If you see motor-imagery accuracy near 95% on EEGMMIDB, something is leaking** —
+usually a random split over epochs from one recording, or the inclusion of
+executed-movement runs whose EMG contamination is trivially separable.
+
+`bandpower_rf` is worth reading as a diagnosis of this project's first version.
+It uses per-channel log band power with **no spatial filtering** — essentially
+v1's feature design — and reaches 0.538. The gap from there to 0.628 is what
+spatial filtering and learned representations buy, and it is why v1's approach
+could not have worked no matter how the classifier was tuned.
+
+### Per-user calibration
+
+Adapting a population model to the individual is the standard way to make a BCI
+usable, so it is worth stating plainly that **on this dataset it did not help.**
+
+`csp_lda`, 9 subjects, `refit` = train from scratch on the subject's own trials:
+
+| Calibration trials | Strategy | Accuracy |
+|---|---|---|
+| 0 | population model | **0.625 ± 0.158** |
+| 5 | refit | 0.514 ± 0.107 |
+| 10 | refit | 0.503 ± 0.151 |
+| 20 | refit | 0.567 ± 0.133 |
+| 40 | refit | 0.563 ± 0.248 |
+
+`eegnet`, 3 subjects, `finetune` = adapt the pretrained population model:
+
+| Calibration trials | Strategy | Accuracy |
+|---|---|---|
+| 0 | population model | 0.622 ± 0.044 |
+| 20 | finetune | 0.620 ± 0.042 |
+| 40 | finetune | 0.633 ± 0.151 |
+
+Two findings, both negative, both worth keeping:
+
+1. **Refitting from scratch is strictly worse than not calibrating at all.**
+   Forty trials cannot support fitting CSP + LDA from nothing, so the population
+   model wins at every budget. This is the empirical argument for fine-tuning
+   over refitting.
+2. **Fine-tuning gained ~1 point, inside the noise.** With three subjects and a
+   0.15 standard deviation, that is not a real effect.
+
+The likely reason is a ceiling in the corpus rather than in the method:
+EEGMMIDB provides only ~45 imagined left/right trials per subject, so a 40-trial
+calibration set consumes nearly everything and leaves almost nothing to evaluate
+on. Published calibration gains come from datasets like BCI IV-2a with 288 trials
+per session. Testing that properly needs the remaining IV-2a subjects, which had
+not finished downloading.
+
+Reproduce with `bwt calibrate --pipeline eegnet --budgets 0 5 10 20 40`. Both
+curves are in `reports/calibration.json`.
+
+### Evidence accumulation
+
+A 61% per-trial decoder is far too unreliable to spell with: five consecutive
+decisions at that rate land on the intended character about a tenth of the time.
+The fix is a better *decision rule*, not a better classifier. `bwt.streaming`
+accumulates log-likelihood across repeated trials and commits only when the
+posterior crosses a threshold — sequential probability ratio testing.
+
+Measured on **real out-of-fold probabilities** from the cross-subject `csp_lda`
+model, where a single trial scores 0.611:
+
+| Commit threshold | Decision accuracy | Trials per decision | Sequences that commit |
+|---|---|---|---|
+| 0.75 | 0.654 | 4.7 | 98% |
+| 0.90 | 0.674 | 8.0 | 90% |
+| 0.99 | **0.707** | 12.8 | 72% |
+
+**This is much weaker than an idealised simulation suggests, and that gap is the
+point.** `simulate_accumulation_throughput`, which assumes independent draws,
+predicts 0.99+ decision accuracy from the same 0.611 decoder. Reality gives
+0.707, because a subject's errors are correlated: for someone the model cannot
+decode, gathering more evidence yields a *confidently wrong* answer rather than
+a correct one. At the strictest threshold, 28% of sequences never commit at all.
+
+Stated plainly: a decision you can trust roughly seven times in ten, at eight to
+thirteen windows apiece. Evidence accumulation is a real and worthwhile
+improvement over a single window, and it is still a long way from a control
+signal anyone would want to rely on.
+
+Two caveats, both enforced in the code:
+
+- **Repeated independent trials** (the user imagines the movement again) is the
+  regime this works in. `evaluate_accumulation` measures it on real
+  cross-validated probabilities, so subject-level error correlation is included.
+- **Overlapping sliding windows within one trial are not independent.** They
+  share most of their samples and therefore share their errors, so accumulation
+  makes the decoder *confident* rather than *correct*. You can watch this happen
+  on the `/live` page: a subject the model is biased on will produce a long run
+  of the same confident-but-wrong decision. `simulate_accumulation_throughput`
+  documents its independence assumption and should be read as an upper bound.
+
+### The same code on a different lab's data
+
+BCI Competition IV-2a under the competition's own protocol — train on session
+one, test on session two, recorded on a different day. **Three subjects of
+nine** (A01–A03); the remaining six were not downloaded.
+
+| Pipeline | Two-class | Four-class | κ (four-class) |
+|---|---|---|---|
+| `riemann_ts` | **0.796 ± 0.239** | 0.694 ± 0.214 | 0.593 |
+| `csp_lda` | 0.778 ± 0.235 | 0.688 ± 0.154 | 0.583 |
+| `fbcsp_lda` | 0.745 ± 0.237 | **0.712 ± 0.175** | 0.616 |
+
+```bash
+bwt evaluate --dataset bnci2a --task mi_four_class --protocols session_holdout
+```
+
+Not a line of pipeline code changed between this and the EEGMMIDB results — a
+different lab, amplifier, 22 electrodes instead of 64, 250 Hz instead of 160,
+and a tongue-imagery class. The four-class means sit right on the published
+nine-subject figures for this dataset (~0.68), which is the strongest evidence
+here that the implementation is sound.
+
+**Read the standard deviations, not just the means.** They are large because the
+subjects differ enormously:
+
+| Subject | Two-class (`riemann_ts`) | Four-class (`fbcsp_lda`) |
+|---|---|---|
+| A01 | 0.875 | 0.802 |
+| A02 | 0.528 | 0.510 |
+| A03 | **0.986** | 0.823 |
+
+A03 is decoded almost perfectly on the two-class task; A02 sits at chance on it
+(0.528 against 0.500) while still beating chance on four-class (0.510 against
+0.250). That is the same bimodality visible as the ±0.17 spread on EEGMMIDB — a
+substantial minority of people cannot drive a motor-imagery BCI, and no amount
+of modelling fixes it.
+
+The comparison with EEGMMIDB's 0.611 still points at the corpora rather than the
+code: BCI IV-2a supplies 288 trials per session under tighter experimental
+control against EEGMMIDB's ~45 per subject.
+
+### Does the model use real physiology?
+
+`bwt explain` produces the evidence, written to `reports/`:
+
+- **`erd_curve.png`** — mu/beta (8–30 Hz) power at C3, Cz and C4 relative to a
+  pre-cue baseline. Shows the textbook ~30% event-related desynchronisation at
+  cue onset, and the expected **contralateral crossover**: right-hand imagery
+  suppresses C3 more, left-hand imagery suppresses C4 more.
+- **`csp_patterns.png`** — CSP spatial patterns as scalp topographies. The
+  leading components sit over sensorimotor cortex. Later components sometimes
+  show a frontal hotspot, which is ocular rather than neural — worth knowing
+  rather than hiding.
+- **Lateralisation index** — C3 minus C4 power change during imagery, in
+  percentage points: `right_fist −6.70`, `left_fist −1.60` over 60 subjects.
+  The separation between classes is in the physiologically expected direction.
+  Both are negative because group-averaged EEGMMIDB carries an overall
+  C3-dominant bias in a mostly right-handed cohort; it is the *difference*
+  between classes that the decoder exploits.
+
+Measuring ERD requires pre-cue samples, which the decoding window (0.5–3.5 s)
+does not contain. `bwt explain` re-loads the data over `ERD_WINDOW` for this
+reason, and `band_power_timecourse` warns loudly if asked to compute ERD from a
+bundle with no baseline period.
+
+---
+
+## Quick start
+
+```bash
+python -m venv .venv
+. .venv/Scripts/activate          # Windows;  source .venv/bin/activate on Unix
+pip install -r requirements.txt
+pip install -e .
+
+bwt info                          # dataset inventory and run protocol
+bwt datasets                      # available corpora and their tasks
+bwt train --pipeline eegnet       # epoch, cross-validate, save an artifact
+bwt models                        # artifacts with measured accuracy
+bwt serve                         # http://127.0.0.1:5000
+```
+
+GPU is optional. `pip install torch --index-url https://download.pytorch.org/whl/cu128`
+enables the neural pipelines on CUDA; without PyTorch the classical pipelines
+work unchanged and the neural ones raise a clear ImportError.
+
+---
+
+## Datasets
+
+| Key | Corpus | Subjects | Channels | Rate | Classes |
+|---|---|---|---|---|---|
+| `eegmmidb` | PhysioNet EEG Motor Movement/Imagery | 105 usable | 64 | 160 Hz | up to 4 |
+| `bnci2a` | BCI Competition IV-2a | 9 | 22 | 250 Hz | 4 |
+
+Everything above the data layer works on `EpochBundle` and never knows which
+corpus produced it, so adding a dataset means implementing one class in
+`bwt/data/datasets.py` rather than touching any model. BCI IV-2a is a deliberate
+contrast — different lab, amplifier, montage, sampling rate, and a tongue-imagery
+class — because results from a single recording rig are always suspect.
+
+`eegmmidb` is read from local EDF files under `raw_data/` (override with
+`$BWT_RAW_DATA`). `bnci2a` is fetched through MOABB on first use.
+
+**Getting the recordings.** `raw_data/` (3.4 GB, 109 subjects) is stored in
+this repository through [Git LFS](https://git-lfs.com), so a clone brings it
+back:
+
+```bash
+git lfs install        # once per machine
+git clone https://github.com/RashiShah08/brainwave-to-text.git
+# or, in a clone made without LFS:
+git lfs pull
+bwt verify-data        # checks every file against PhysioNet's SHA-256 manifest
+```
+
+To fetch only what you need, `git lfs pull --include "raw_data/S001/*"`. The
+canonical source is PhysioNet, <https://physionet.org/content/eegmmidb/1.0.0/>,
+if this copy is ever unavailable.
+
+### The EEGMMIDB protocol, stated explicitly
+
+The largest defect in this project's first version was a misreading of the
+annotations. **`T1` and `T2` mean different movements in different runs:**
+
+| Runs | Execution | `T1` | `T2` |
+|---|---|---|---|
+| 3, 7, 11 | executed | left fist | right fist |
+| **4, 8, 12** | **imagined** | **left fist** | **right fist** |
+| 5, 9, 13 | executed | both fists | both feet |
+| **6, 10, 14** | **imagined** | **both fists** | **both feet** |
+| 1, 2 | — | baseline: eyes open / eyes closed, no trials | |
+
+`T0` is the cued rest period within task runs.
+
+Pooling the two run families produces a class meaning "right fist **or** both
+feet" — physiologically meaningless. Pooling executed with imagined runs mixes
+real muscle activity into a task that is supposed to measure imagery.
+`bwt.data.physionet` encodes all of this as data, and `tests/test_physionet.py`
+asserts that no task can merge hand with foot contrasts or executed with imagined
+runs. Exactly one task, `mi_move_vs_rest`, is exempt — collapsing effectors is
+its entire point — and a test enforces that the exemption list stays that one
+entry.
+
+**Excluded subjects.** `S088`, `S089`, `S092`, `S100`, verified against the EDF
+headers rather than taken on trust: the first three are 128 Hz with 5.125 s
+trials, and S089's baseline runs carry a single 60 s `T1` annotation instead of a
+rest marker.
+
+### Tasks
+
+| Task | Classes | Runs |
+|---|---|---|
+| `mi_left_right` | left_fist, right_fist | 4, 8, 12 |
+| `mi_fists_feet` | both_fists, both_feet | 6, 10, 14 |
+| `mi_four_class` | all four imagined movements | 4, 6, 8, 10, 12, 14 |
+| `mi_left_right_rest` | left_fist, right_fist, rest | 4, 8, 12 |
+| `mi_move_vs_rest` | rest, movement — asynchronous gating | 4, 6, 8, 10, 12, 14 |
+| `me_left_right` | left_fist, right_fist (**executed**) | 3, 7, 11 |
+
+`me_left_right` exists as an upper reference only. It scores higher because real
+movement leaks EMG into the EEG; it is not a BCI result.
+
+---
+
+## Architecture
+
+```
+src/bwt/
+  paths.py          repository-relative paths, all overridable by env var
+  config.py         defaults -> configs/default.yaml -> BWT_* env -> CLI flags
+  data/
+    physionet.py    run/annotation protocol, task definitions, exclusions
+    epochs.py       EDF -> labelled epoch tensor, subject IDs attached
+    datasets.py     dataset registry + cached loading
+  pipelines.py      model registry: filtering + spatial filters + classifier
+  deep/
+    modules.py      EEGNet, ShallowConvNet, EEG-Conformer
+    estimator.py    sklearn-compatible wrapper around a PyTorch model
+  calibration.py    population -> individual adaptation, calibration curves
+  evaluation.py     subject-aware CV, permutation test, leakage guards
+  streaming.py      sliding-window decoding, evidence accumulation
+  explain.py        ERD curves, CSP topographies, lateralisation index
+  artifacts.py      versioned persistence with a model card
+  metrics.py        information transfer rate
+  serving/          Flask app, predictor, live streaming endpoint
+  cli.py            bwt entry point
+```
+
+### One pipeline, used for training and serving
+
+Every model — classical or neural — accepts the same input the epoch loader
+produces, a `(trials, channels, times)` array in microvolts, and performs **all**
+of its own filtering and spatial projection internally. The fitted pipeline is
+the entire artifact.
+
+This is deliberate. v1 had a separate hand-written feature extractor in the web
+app that had silently drifted from the training one.
+`tests/test_serving.py::TestTrainServeParity` asserts byte-identical predictions
+between the two paths, `TestRealDataEpochingParity` checks the epocher agrees
+sample-for-sample on real recordings, and a test greps the serving module for
+signal-processing calls that should not be there.
+
+Wrapping the neural models as scikit-learn classifiers is what lets them reuse
+the subject-grouped cross-validation, the artifact format, and the serving layer
+without a parallel code path. That matters more for deep models than classical
+ones: they have enough capacity to memorise a subject outright, so the leakage
+guards must apply to them automatically.
+
+### Pipelines
+
+| Name | Method |
+|---|---|
+| `csp_lda` | Common Spatial Patterns on 8–30 Hz → shrinkage LDA |
+| `fbcsp_lda` | Filter-Bank CSP over eight sub-bands → mutual-information selection → LDA |
+| `riemann_ts` | Covariances → Riemannian tangent space → logistic regression |
+| `riemann_ts_aligned` | As above with per-recording recentring for cross-subject transfer |
+| `fb_riemann_ts` | Tangent-space features per sub-band, concatenated |
+| `bandpower_rf` | Per-channel log band power → random forest (deliberately weak floor) |
+| `eegnet` | Compact depthwise-separable CNN, ~2.8k parameters |
+| `shallownet` | Temporal + spatial conv, square/log pooling — a learned FBCSP |
+| `conformer` | Shallow conv tokeniser + transformer encoder |
+
+Kernel sizes in the published architectures are quoted for the sampling rate of
+the original paper, so every module rescales them from its `sfreq` argument
+rather than hardcoding numbers that would be silently wrong at 160 Hz. A test
+asserts this.
+
+`riemann_ts_aligned` uses statistics of the batch it is transforming, so
+predictions within one recording are not independent. Artifacts using it set
+`requires_batch_recentering` in the model card and the service warns when handed
+too few epochs. Its reference mean is log-Euclidean rather than affine-invariant:
+the iterative Riemannian mean routinely failed to converge on batches of a few
+thousand 64×64 matrices, costing eleven minutes per fold for no measurable gain.
+
+---
+
+## Evaluation
+
+Three protocols, and every cross-subject split passes through
+`assert_no_subject_leakage`, which raises if any subject appears on both sides of
+a fold.
+
+- `within_subject_cv` — stratified k-fold inside each subject; reports the
+  distribution over subjects, not a pooled number.
+- `cross_subject_cv` — `GroupKFold` on subject ID.
+- `permutation_test` — shuffles labels **within** each subject, preserving group
+  structure, and reports `(hits + 1) / (n + 1)`.
+
+### What v1's numbers actually were
+
+v1 reported **94.3%**, from `test_model.py` evaluating on the full
+`cleaned_features.csv`, ~80% of which had trained the model. Its two saved
+confusion matrices differ by exactly the training rows:
+
+| | Trials | Errors | Accuracy |
+|---|---|---|---|
+| Training portion | 13,717 | 19 | 99.86% |
+| Genuinely held out | 3,430 | 958 | **72.07%** |
+
+Against a 67.93% majority-class baseline, with 28.5% recall on class 1 — and its
+two classes had no coherent meaning. Details in
+[docs/v1-postmortem.md](docs/v1-postmortem.md).
+
+---
+
+## Command reference
+
+```bash
+bwt info                                     # dataset inventory, run protocol
+bwt datasets                                 # corpora and their tasks
+bwt prepare --dataset bnci2a --task mi_four_class
+bwt train    --pipeline eegnet --task mi_left_right
+bwt evaluate --pipeline csp_lda --permutations 100
+bwt benchmark --pipelines csp_lda eegnet
+bwt calibrate --pipeline eegnet --budgets 0 5 10 20 40
+bwt stream   raw_data/S042/S042R04.edf --speed 1.0 --threshold 0.9
+bwt explain  --task mi_left_right
+bwt predict  raw_data/S001/S001R04.edf --json
+bwt models
+bwt serve --port 8080
+```
+
+Common flags: `--dataset`, `--subjects 1,2,5-9`, `--tmin/--tmax`, `--cv-splits`,
+`--n-jobs`, `--no-cache`, `--log-level DEBUG`.
+
+---
+
+## HTTP API
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /healthz` | Liveness; reports the loaded model and its classes |
+| `GET /api/v1/model` | Model card, measured accuracy, input contract |
+| `POST /api/v1/predict` | Multipart `file=<recording.edf>` → JSON predictions |
+| `POST /api/v1/stream` | Same, but streams newline-delimited JSON per window |
+| `GET /` , `POST /predict` | Browser UI |
+| `GET /live` | Live decoder: cortex, evidence accumulation, real EEG traces |
+
+```bash
+curl -F file=@raw_data/S001/S001R04.edf http://127.0.0.1:5000/api/v1/predict
+curl -N -F file=@raw_data/S001/S001R04.edf \
+     "http://127.0.0.1:5000/api/v1/stream?speed=1.0&step=0.5&threshold=0.9"
+```
+
+The stream endpoint emits NDJSON rather than server-sent events because the
+recording arrives by POST and `EventSource` only issues GETs.
+
+### Input contract
+
+Enforced, never coerced. A recording that does not match is rejected with a 400
+rather than silently resampled or reordered, because either would invalidate the
+spatial filters the model learned: EDF/EDF+, exactly the model's sampling rate,
+the montage recorded in the model card (order is normalised), and long enough to
+yield one epoch. Uploads are capped at 64 MB, written to a private temp file that
+never derives from the client-supplied filename, and removed in a `finally`
+block. `debug` is never enabled — the Werkzeug debugger is a remote code
+execution primitive, and v1 shipped it.
+
+---
+
+## Development
+
+```bash
+make install-dev          # or: pip install -r requirements-dev.txt && pip install -e .
+make test                 # full suite
+make test-fast            # skip tests needing the dataset
+make lint                 # ruff
+make coverage
+```
+
+`make help` lists every target. CI (`.github/workflows/ci.yml`) runs the
+hermetic suite on Linux and Windows across Python 3.12 and 3.13, plus a
+CPU-PyTorch job for the neural pipelines, a ruff check, and a Docker build.
+Release history and the reasoning behind each change is in
+[CHANGELOG.md](CHANGELOG.md).
+
+Long benchmarks are resumable. `bwt benchmark --time-budget 600` runs for ten
+minutes, checkpoints every fold as it completes, and stops at a fold boundary;
+re-running continues from where it stopped. The checkpoint keeps per-fold true
+and predicted labels, so any number in this README can be recomputed without
+retraining.
+
+The unit suite is hermetic: it generates synthetic epochs with a real, learnable
+class difference and writes synthetic EDF files, so it runs on a checkout with no
+dataset present. Neural tests skip automatically if PyTorch is absent.
+
+| Suite | What it covers | Run |
+|---|---|---|
+| `tests/test_api_edge_cases.py` | Adversarial HTTP tests: hostile filenames and payloads, every sampling-rate and channel-set violation, the NDJSON stream grammar checked frame by frame against the estimator, temp-file hygiene, and concurrency and thread starvation against a real waitress server | `pytest tests/test_api_edge_cases.py` |
+| `tests/test_core_edge_cases.py` | Property-based tests (Hypothesis) of the accumulator, windowing and band power, plus config, artifact, cache, protocol and permutation-test edge cases | `pytest tests/test_core_edge_cases.py` |
+| `tests/test_frontend_e2e.py` | Playwright: both pages checked against the JSON API, double submits, aborts, malformed stream frames, hostile file and class names, no-WebGL mode, viewport sweep | `make test-e2e` |
+| `tests/test_bug_fixes.py` | Every defect the suites above found, pinned from all sides: replay-budget slots under load and on every failure path, strict numeric query parsing (property-tested), truncation at the cap ±1, stream/decode message parity, flat and non-finite input, damaged EDFs, estimator refusals that must not leak internals | `pytest tests/test_bug_fixes.py` |
+| `tests/test_security_hardening.py` | The attack surface from the socket up: security headers and the CSP nonce on every kind of response, log forging, the WSGI server's limits under raw-socket abuse (oversized declared bodies, malformed framing, slowloris, header floods), multipart abuse, every route × every method, CORS, model-weight integrity, templates safe by construction | `pytest tests/test_security_hardening.py` |
+| `tests/test_fuzzing.py` | Hypothesis fuzzing: every fixed-width EDF header field (global and per signal), several at once, bit flips in the data records, truncation and padding, arbitrary bytes, query strings, URL paths, raw bodies and filenames. Every input must get a clean 2xx/4xx, strict JSON, a terminated stream and no leaked temp file. `BWT_FUZZ_EXAMPLES` sets the depth (default 120) | `pytest tests/test_fuzzing.py` |
+| `tests/test_soak.py` | Six clients of mixed traffic against a live server for `BWT_SOAK_SECONDS` (default 120), asserting no failures and no creep in memory, threads, temp files, replay slots or /healthz latency | `BWT_SOAK=1 pytest tests/test_soak.py` |
+| `tests/test_hostile_recordings.py` | Recordings built to break the decoder: channel spelling, duplicate and surplus channels, malformed, duplicated, flooding and last-sample cues, every wrong sampling rate, a ten-minute file, sample-exact stream/decode parity, a transductive model under 12 threads | `pytest tests/test_hostile_recordings.py` |
+| `tests/test_real_model_audit.py` | The served artifact against the real recordings: label integrity, units, estimator parity, class collapse | `pytest -m slow tests/test_real_model_audit.py` |
+| `tests/test_real_corpus_sweep.py` | All 109 subjects through the served model's decode and stream paths; only an already-excluded subject may be refused, and only for a stated reason | `pytest -m slow tests/test_real_corpus_sweep.py` |
+
+A defect found by a test is first recorded as an `xfail(strict=True)` test whose
+reason states the bug, so the suite stays green while it is tracked and fails as
+soon as a fix lands without its marker being removed. List any open ones with
+`pytest -rx`. The twenty found by the edge-case suites are all fixed; their tests
+now pass outright, and `tests/test_bug_fixes.py` holds the harder follow-ups.
+
+### Model artifacts
+
+Each is a directory containing `pipeline.joblib` and `model_card.json`. The card
+records the task and what its classes mean, the exact input contract, subjects
+trained on and excluded, measured accuracy under every protocol, and library
+versions. Loading refuses a mismatched schema version and warns on library drift.
+A model whose card is missing is refused outright — serving a classifier whose
+output classes are undocumented is how v1 came to display "Left"/"Right" for a
+model that meant nothing of the kind. Neural models persist their weights on CPU,
+so a GPU-trained artifact loads anywhere.
+
+---
+
+## Limitations
+
+- **Accuracy is modest and highly variable between people.** This is the
+  paradigm, not the implementation.
+- **Evidence accumulation buys accuracy with time.** It is a real improvement
+  over a single window, but it costs seconds per decision and only holds for
+  repeated independent trials.
+- **Cross-subject transfer is weak, and calibration did not fix it here.**
+  Measured on EEGMMIDB, refitting per subject was worse than the population
+  model and fine-tuning gained about a point, inside the noise. That is a
+  finding about this corpus's 45-trials-per-subject ceiling as much as about the
+  method, but it is what was measured.
+- **Sliding-window accumulation amplifies bias** rather than averaging out
+  noise, because overlapping windows share their errors.
+- **No online acquisition.** Streaming replays a recording; there is no driver
+  for live hardware.
+- **Two datasets, both research-grade rigs.** Nothing here is validated against
+  consumer headsets; the input contract will reject them, which is intended.
+
+---
+
+## Citing the data
+
+The EEGMMIDB terms require **all three** of the following when the dataset is
+used. They are not optional.
+
+- Schalk, G., McFarland, D.J., Hinterberger, T., Birbaumer, N., Wolpaw, J.R.
+  (2004). BCI2000: A General-Purpose Brain-Computer Interface (BCI) System.
+  *IEEE Transactions on Biomedical Engineering* 51(6):1034–1043.
+- [www.bci2000.org](http://www.bci2000.org)
+- Goldberger, A.L. et al. (2000). PhysioBank, PhysioToolkit, and PhysioNet.
+  *Circulation* 101(23):e215–e220.
+
+Source: <https://archive.physionet.org/pn4/eegmmidb/>. Verify your copy with
+`bwt verify-data`.
+
+## References
+
+- Brunner et al. (2008). BCI Competition 2008 – Graz data set A.
+- Ang et al. (2008). Filter Bank Common Spatial Pattern (FBCSP) in BCI. *IJCNN*.
+- Barachant et al. (2012). Multiclass BCI Classification by Riemannian Geometry. *IEEE TBME* 59(4).
+- Zanini et al. (2018). Transfer Learning: A Riemannian Geometry Framework. *IEEE TBME* 65(5).
+- Lawhern et al. (2018). EEGNet: a compact CNN for EEG-based BCIs. *J. Neural Eng.* 15(5).
+- Schirrmeister et al. (2017). Deep learning with CNNs for EEG decoding and visualization. *Hum. Brain Mapp.* 38(11).
+- Song et al. (2023). EEG Conformer. *IEEE TNSRE* 31.
+- Haufe et al. (2014). On the interpretation of weight vectors of linear models in neuroimaging. *NeuroImage* 87.
+- Wolpaw et al. (2002). Brain-computer interfaces for communication and control. *Clin. Neurophysiol.* 113(6).
+
+## License
+
+MIT. Research and educational use. **Not a medical device.**

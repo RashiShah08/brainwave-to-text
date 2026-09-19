@@ -1,0 +1,47 @@
+name: Deploy branch
+
+# Render builds the site from `deploy`, never from `main`.
+#
+# `main` carries the 3.4 GB EEGMMIDB corpus in Git LFS, and Render fetches LFS
+# objects on every clone with no way to opt out. The site needs none of them,
+# so each deploy from `main` would download the whole corpus and spend the
+# repository's LFS bandwidth on it.
+#
+# `deploy` is `main` with raw_data/ removed, rebuilt as a single commit on
+# every push. Nothing here downloads LFS content: checkout leaves the pointer
+# files in place, and they are removed before the commit.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-branch
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: Rebuild deploy from main without the corpus
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan deploy
+          git rm -r -q --cached raw_data
+          rm -rf raw_data
+          # Hard fail rather than publish a branch that would pull the corpus.
+          if git ls-files | grep -q '^raw_data/'; then
+            echo "raw_data is still tracked; refusing to publish" >&2
+            exit 1
+          fi
+          git commit -q -m "Deploy ${GITHUB_SHA::7} from main"
+          git push --force origin deploy

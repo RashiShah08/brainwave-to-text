@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+{# `doc` marks a plain document page: no specimen, normal scrolling. The live
+   view overrides it and takes the whole window. #}
+<html lang="en"{% block docflag %} data-doc="1"{% endblock %}>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Brainwave decoder{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}" />
+
+  {% if request.endpoint != 'live' %}
+  {# Warm the specimen from the document pages. It is the only heavy asset on
+     the site, and fetching it here is what makes the first crossing to the
+     live view land on a built scene instead of an empty stage. #}
+  <link rel="prefetch" href="{{ url_for('static', filename='cortex.bin') }}" as="fetch" />
+  <link rel="prefetch" href="{{ url_for('static', filename='brain3d.js') }}" as="script" />
+  <link rel="prefetch" href="/api/v1/geometry" as="fetch" />
+  {% endif %}
+
+  <!-- Must run before any page script: module scripts execute in document
+       order, and content blocks sit above the end of <body>. -->
+  <script type="module" nonce="{{ csp_nonce }}">
+    // Resolves once the specimen exists, so pages can drive it without racing
+    // the loads. Null when WebGL is unavailable, and null on document pages:
+    // the canvas is fixed to the viewport, so on a page whose content is not
+    // itself positioned it lies over everything and silently swallows every
+    // click. Not named `world` — an element id already claims that.
+    window.neuralWorld = document.documentElement.dataset.doc
+      ? Promise.resolve(null)
+      : import("{{ url_for('static', filename='brain3d.js') }}").then((m) =>
+        Promise.all([
+          fetch('/api/v1/geometry').then((r) => r.json()),
+          fetch("{{ url_for('static', filename='cortex.bin') }}")
+            .then((r) => r.arrayBuffer()).then(m.decodeCortex),
+        ]).then(([geo, cortex]) => {
+          const env = new m.NeuralEnvironment(
+            document.getElementById('world'), geo, cortex,
+          );
+          document.documentElement.dataset.world = 'live';
+          document.documentElement.dataset.channels = geo.n_channels;
+          return env;
+        })).catch((e) => {
+          console.error('specimen failed to load', e);
+          document.documentElement.dataset.world = 'off';
+          return null;
+        });
+  </script>
+</head>
+<body class="{% block bodyclass %}doc{% endblock %}">
+  <canvas id="world" aria-hidden="true"></canvas>
+
+  <!-- Leader and label for the selected structure, drawn in screen space: a
+       3D leader of fixed length points wherever the anatomy happens to face,
+       which is off the page as often as not. -->
+  <aside id="region" class="callout" aria-live="polite" hidden>
+    <svg class="callout-leader" aria-hidden="true">
+      <polyline />
+      <circle r="2.5" />
+    </svg>
+    <div class="callout-inner">
+      <div class="callout-body">
+        <div class="callout-name"></div>
+        <p class="callout-note"></p>
+      </div>
+    </div>
+  </aside>
+
+  <header class="topbar">
+    <div class="wrap">
+      <a class="brand" href="{{ url_for('index') }}">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>Cortical decoder</span>
+      </a>
+      {# The result page is reached by submitting the decode form, so it counts
+         as that section rather than as nowhere. #}
+      {% set section = 'live' if request.endpoint == 'live' else 'file' %}
+      <nav class="topbar-meta">
+        <a class="navlink" href="{{ url_for('index') }}"
+           {% if section == 'file' %}aria-current="page"{% endif %}>Decode file</a>
+        <a class="navlink" href="{{ url_for('live') }}"
+           {% if section == 'live' %}aria-current="page"{% endif %}>Live</a>
+        <span class="navmark" aria-hidden="true"></span>
+        {% if model %}
+        <span class="pill">{{ model.task }}</span>
+        <span class="pill">{{ model.pipeline }}</span>
+        {% endif %}
+      </nav>
+    </div>
+  </header>
+
+  {% block fullbleed %}{% endblock %}
+
+  <main class="wrap">
+    {% block content %}{% endblock %}
+
+    {% block footer %}
+    <footer class="footer">
+      <p>
+        This decodes <strong>which movement was imagined</strong> from scalp EEG.
+        It does not read words, inner speech, or intent &mdash; no scalp-EEG
+        method can.
+      </p>
+      <p>
+        Data: PhysioNet EEG Motor Movement/Imagery Database. Research and
+        educational use only; not a medical device.
+      </p>
+    </footer>
+    {% endblock %}
+  </main>
+
+  <!-- A module, so it runs after the head bootstrap that creates
+       window.neuralWorld. A classic script here executes during parse, before
+       any deferred module, and would find it undefined. -->
+  <script type="module" nonce="{{ csp_nonce }}">
+    (function () {
+      var card = document.getElementById('region');
+      var name = card.querySelector('.callout-name');
+      var note = card.querySelector('.callout-note');
+      // Visibility and placement belong to the scene, which knows where the
+      // leader tip is; this only fills in the words.
+      addEventListener('brain:select', function (e) {
+        if (!e.detail) return;
+        name.textContent = e.detail.name;
+        note.textContent = e.detail.note;
+      });
+      window.neuralWorld.then(function (env) {
+        if (env) env.setCalloutEl(card);
+      });
+    }());
+  </script>
+  <!-- Navigation between the two pages. The exit is animated here rather than
+       through the cross-document View Transition API, which left the incoming
+       document frozen with no frame ever produced. -->
+  <script nonce="{{ csp_nonce }}">
+    (function () {
+      var nav = document.querySelector('.topbar-meta');
+      var mark = nav && nav.querySelector('.navmark');
+      var links = nav ? [].slice.call(nav.querySelectorAll('.navlink')) : [];
+      if (!mark || !links.length) return;
+      nav.classList.add('has-navmark');
+
+      var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      // Long enough to read as a movement, short enough that nobody waits for
+      // it, and slightly longer than the marker's own slide so the marker has
+      // landed by the time the page is swapped. The document is prefetched, so
+      // this is the only cost a navigation carries.
+      var EXIT_MS = reduced ? 0 : 215;
+
+      function place(link, animate) {
+        if (!link) return;
+        mark.classList.toggle('is-moving', !!animate && !reduced);
+        // Measured against the nav rather than the page: the bar's contents
+        // shift with the model pills, and a hard-coded offset would drift.
+        var l = link.getBoundingClientRect();
+        var n = nav.getBoundingClientRect();
+        mark.style.width = (l.width + 4) + 'px';
+        mark.style.transform = 'translateX(' + ((l.left - n.left) - 2) + 'px)';
+        mark.classList.add('is-placed');
+      }
+
+      var current = links.filter(function (a) {
+        return a.hasAttribute('aria-current');
+      })[0];
+      place(current, false);
+      // Fonts land after first paint and change the link's width, so the
+      // marker is measured again once they have.
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(function () { place(current, false); });
+      }
+      addEventListener('resize', function () { place(current, false); },
+                       { passive: true });
+      // Restoring from the back/forward cache leaves the exit state applied,
+      // which would show an empty page.
+      addEventListener('pageshow', function () {
+        document.documentElement.removeAttribute('data-leaving');
+      });
+
+      links.forEach(function (link) {
+        link.addEventListener('click', function (e) {
+          if (e.defaultPrevented || e.button !== 0
+              || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+          if (link === current) { e.preventDefault(); return; }
+          e.preventDefault();
+          place(link, true);
+          document.documentElement.setAttribute('data-leaving', '1');
+          var href = link.href;
+          var went = false;
+          var go = function () { if (!went) { went = true; location.href = href; } };
+          setTimeout(go, EXIT_MS);
+        });
+      });
+    }());
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

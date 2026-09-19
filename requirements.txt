@@ -1,0 +1,36 @@
+# Pinned runtime dependencies, verified on Python 3.14.6 / Windows 11.
+# Install with:  pip install -r requirements.txt
+#
+# Model artifacts record the versions they were trained against and warn on
+# drift at load time, because scikit-learn and pyriemann do not guarantee
+# unpickling across minor versions.
+
+numpy==2.5.1
+scipy==1.18.0
+scikit-learn==1.9.0
+pandas==3.0.5
+mne==1.12.1
+pyriemann==0.12
+joblib==1.5.3
+matplotlib==3.11.1
+PyYAML==6.0.3
+
+# Serving
+Flask==3.1.3
+Werkzeug==3.1.8
+Jinja2==3.1.6
+waitress==3.0.2
+
+# ---------------------------------------------------------------------------
+# Optional extras. The classical pipelines and the whole service run without
+# these; install them only if you need what they enable.
+# ---------------------------------------------------------------------------
+
+# Neural pipelines (eegnet / shallownet / conformer). For CUDA, install from
+# PyTorch's own index instead of PyPI, matching your driver:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+# Verified on an RTX 5060 (Blackwell, sm_120) with the cu128 build.
+# torch==2.11.0
+
+# Second dataset (BCI Competition IV-2a) via MOABB.
+# moabb==1.5.0

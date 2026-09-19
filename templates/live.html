@@ -1,0 +1,729 @@
+{% extends "base.html" %}
+{% block title %}Live cortical decoder{% endblock %}
+{# The instrument owns the window; only the document pages scroll. #}
+{% block bodyclass %}{% endblock %}
+{% block docflag %}{% endblock %}
+{% block footer %}{% endblock %}
+
+{% block fullbleed %}
+<noscript>
+  <p class="noscript">
+    The live view decodes in the browser and needs JavaScript.
+    <a href="{{ url_for('index') }}">Decode a file</a> works without it.
+  </p>
+</noscript>
+<div class="rig">
+
+  <!-- Acquisition metadata, the way a recorder states its own settings. -->
+  <div class="strip">
+    <div class="strip-item"><span class="strip-key">Task</span><span class="strip-val">{{ model.task }}</span></div>
+    <div class="strip-item" data-rank="1"><span class="strip-key">Method</span><span class="strip-val">{{ model.pipeline }}</span></div>
+    <div class="strip-item" data-rank="2"><span class="strip-key">Channels</span><span class="strip-val">{{ model.n_channels }}</span></div>
+    <div class="strip-item" data-rank="2"><span class="strip-key">Rate</span><span class="strip-val">{{ '%g' % model.sfreq }} Hz</span></div>
+    {# Cross-subject: what an uncalibrated model gets on someone it has never
+       seen, which is the condition this page actually runs in. #}
+    <div class="strip-item" data-rank="1"><span class="strip-key">Cross-subj</span><span class="strip-val">
+      {% if performance and performance.cross_subject_accuracy is not none %}
+        {{ '%.1f' % (performance.cross_subject_accuracy * 100) }}%
+      {% else %}&mdash;{% endif %}</span></div>
+    <div class="strip-item" data-rank="2"><span class="strip-key">Chance</span><span class="strip-val">
+      {{ '%.0f' % (performance.chance_level * 100) }}%</span></div>
+    <div class="strip-item strip-spacer"></div>
+    <div class="strip-item"><span class="strip-key">t</span><span class="strip-val" id="ov-time">0.0 s</span></div>
+    <div class="strip-item"><span class="strip-key">State</span><span class="strip-val" id="ov-status">idle</span></div>
+  </div>
+
+  <!-- Left: acquisition control. -->
+  <div class="col col-l">
+    <section class="panel">
+      <div class="panel-head"><span>Source</span></div>
+      <div class="panel-body">
+        <form id="form">
+          <label class="drop" id="zone" for="file">
+            <b>Load an .edf recording</b>
+            <em>{{ model.n_channels }} channels &middot; {{ '%g' % model.sfreq }} Hz</em>
+            <span class="file" id="filename"></span>
+            <input type="file" id="file" accept=".edf" />
+          </label>
+
+          <div class="mt" style="margin-top:10px">
+            <label class="field"><span>Replay speed</span>
+              <select id="speed">
+                <option value="0">unthrottled</option>
+                <option value="1">1&times;</option>
+                <option value="4" selected>4&times;</option>
+                <option value="10">10&times;</option>
+              </select>
+            </label>
+            <label class="field"><span>Window step</span>
+              <select id="step">
+                <option value="0.25">0.25 s</option>
+                <option value="0.5" selected>0.50 s</option>
+                <option value="1.0">1.00 s</option>
+              </select>
+            </label>
+            <label class="field"><span>Commit threshold</span>
+              <select id="threshold">
+                <option value="0.75">0.75 &mdash; fast</option>
+                <option value="0.9" selected>0.90 &mdash; balanced</option>
+                <option value="0.99">0.99 &mdash; careful</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="btns" style="margin-top:10px">
+            <button class="btn" id="start" type="submit" disabled>Start</button>
+            <button class="btn btn-ghost" id="stop" type="button" disabled>Stop</button>
+          </div>
+          <div class="status" id="status">Idle</div>
+        </form>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><span>Accumulator</span></div>
+      <div class="panel-body">
+        <div class="rows">
+          <div class="row2"><span class="k">Windows since decision</span><span class="v" id="m-windows">0</span></div>
+          <div class="row2"><span class="k">Decisions</span><span class="v" id="m-decisions">0</span></div>
+          <div class="row2"><span class="k">Timed out</span><span class="v" id="m-timeouts">0</span></div>
+          <div class="row2"><span class="k">Mean windows / decision</span><span class="v" id="m-mean">&mdash;</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Where each pin on the specimen came from, with its numbers. -->
+    <section class="panel panel-grow">
+      <div class="panel-head"><span>Decisions</span><b>newest first</b></div>
+      <div class="panel-body is-flush">
+        <table class="log">
+          <thead>
+            <tr><th class="num">#</th><th class="num">At</th><th>Movement</th>
+                <th class="num">Conf</th><th class="num">Win</th></tr>
+          </thead>
+          <tbody id="log">
+            <tr><td colspan="5" class="empty">none yet</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <!-- Centre: the specimen. Empty by design — the fixed canvas draws here. -->
+  <div class="viewport" id="stage">
+    <div class="viewport-marks">
+      <span class="tag" id="ov-tag">idle</span>
+    </div>
+    <div class="viewport-foot">
+      <span class="hint">drag to rotate &middot; click a structure</span>
+      <span class="verdict" id="ov-text"></span>
+    </div>
+  </div>
+
+  <!-- Right: what the decoder currently believes. -->
+  <div class="col col-r">
+    <section class="panel">
+      <div class="panel-head"><span>Posterior</span><b id="ph-note">accumulating</b></div>
+      <div class="panel-body">
+        <div id="bars"></div>
+        <div class="rows" style="margin-top:10px">
+          <div class="row2"><span class="k">Target</span><span class="v is-alert" id="ld-cue">&mdash;</span></div>
+          <div class="row2"><span class="k">Movement</span><span class="v" id="ld-class">&mdash;</span></div>
+          <div class="row2"><span class="k">&mu;/&beta; lower over</span><span class="v" id="ld-site">&mdash;</span></div>
+          <div class="row2"><span class="k">Contrast axis</span><span class="v" id="ph-axis">&mdash;</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Electrode groups, not structures. Scalp EEG does not resolve to an
+         anatomical structure, so a measured level is only ever attributed to
+         the contacts that measured it. -->
+    <section class="panel panel-grow">
+      <div class="panel-head"><span>Sites</span><b>&mu;/&beta;</b></div>
+      <div class="panel-body is-flush">
+        <table class="tbl">
+          <thead><tr><th>Electrode group</th><th></th><th class="num">Level</th></tr></thead>
+          <tbody id="keyed"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- The chain, stage by stage. Someone who has never seen EEG should be
+         able to read what is happening to the signal without being told. -->
+    <section class="panel">
+      <div class="panel-head"><span>Signal path</span><b>per window</b></div>
+      <div class="panel-body is-flush">
+        <ol class="path" id="path">
+          <li class="path-step" data-step="scalp">
+            <span class="path-n">1</span>
+            <span class="path-t">Scalp<em>voltage at {{ model.n_channels }} electrodes</em></span>
+            <span class="path-v" id="pv-scalp">{{ model.n_channels }} ch</span>
+          </li>
+          <li class="path-step" data-step="band">
+            <span class="path-n">2</span>
+            <span class="path-t">Band<em>keep the mu and beta rhythm</em></span>
+            <span class="path-v" id="pv-band">8&ndash;30 Hz</span>
+          </li>
+          <li class="path-step" data-step="spatial">
+            <span class="path-n">3</span>
+            <span class="path-t">Spatial filter<em>weight the sites that separate the two</em></span>
+            <span class="path-v" id="pv-spatial">CSP</span>
+          </li>
+          <li class="path-step" data-step="classify">
+            <span class="path-n">4</span>
+            <span class="path-t">Classify<em>one window, one guess</em></span>
+            <span class="path-v" id="pv-classify">&mdash;</span>
+          </li>
+          <li class="path-step" data-step="accumulate">
+            <span class="path-n">5</span>
+            <span class="path-t">Accumulate<em>wait until the evidence is decisive</em></span>
+            <span class="path-v" id="pv-accum">&mdash;</span>
+          </li>
+          <li class="path-step" data-step="command">
+            <span class="path-n">6</span>
+            <span class="path-t">Target<em>which cue the subject responded to</em></span>
+            <span class="path-v" id="pv-command">&mdash;</span>
+          </li>
+        </ol>
+        <p class="path-foot">
+          The output is <b>which target the subject was responding to</b>, and
+          the movement that implies &mdash; nothing more. Scalp EEG carries no
+          words, and this decodes none.
+        </p>
+      </div>
+    </section>
+  </div>
+
+  <!-- Bottom: live signal and the decision log, side by side. -->
+  <div class="traces">
+    <div class="panel-head">
+      <span>Signal &mdash; motor strip</span>
+      <b id="scope-note">waiting for a recording</b>
+    </div>
+    <canvas id="scope"></canvas>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block content %}{% endblock %}
+
+{% block scripts %}
+<script type="module" nonce="{{ csp_nonce }}">
+const els = {
+  file: document.getElementById('file'),
+  zone: document.getElementById('zone'),
+  filename: document.getElementById('filename'),
+  form: document.getElementById('form'),
+  start: document.getElementById('start'),
+  stop: document.getElementById('stop'),
+  status: document.getElementById('status'),
+  bars: document.getElementById('bars'),
+  keyed: document.getElementById('keyed'),
+  log: document.getElementById('log'),
+  ovStatus: document.getElementById('ov-status'),
+  ovTag: document.getElementById('ov-tag'),
+  ovTime: document.getElementById('ov-time'),
+  ovText: document.getElementById('ov-text'),
+};
+
+let scene = null;
+let controller = null;
+let state = { decisions: 0, timeouts: 0, windowSum: 0, sinceDecision: 0 };
+
+// The loaded model's classes, so the specimen knows which axis this task
+// varies before a recording has been played.
+const MODEL_CLASSES = {{ model.classes | tojson }};
+
+// Where the target appeared on screen for each class. The subject was never
+// asked to produce a class name: a target appeared somewhere and they responded
+// to it, which is what the decoder is actually recovering -- BCI2000 records
+// precisely this as its TargetCode. Served with the model rather than assumed
+// here, so it cannot drift from the runs it describes.
+let CUE_POSITIONS = {{ cue_positions | tojson }};
+const CUE_ARROW = { left: '←', right: '→', top: '↑', bottom: '↓' };
+
+function cueText(label) {
+  const pos = CUE_POSITIONS[label];
+  if (!pos) return '—';
+  return (CUE_ARROW[pos] || '') + '  ' + pos;
+}
+
+window.neuralWorld.then((env) => {
+  scene = env;
+  if (!env) { els.ovStatus.textContent = 'no webgl'; return; }
+  env.setStage(document.getElementById('stage'));
+  buildKeyed(env);
+  document.getElementById('ph-axis').textContent =
+    env.setContrast(MODEL_CLASSES).label;
+});
+
+// ---- structure table ------------------------------------------------------
+let keyedRows = [];
+
+function buildKeyed(env) {
+  els.keyed.innerHTML = '';
+  keyedRows = env.siteGroups().map((g) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td></td><td><span class="bar"><i></i></span></td>'
+      + '<td class="num">&mdash;</td>';
+    // The contacts are named, so the row states what it actually averaged
+    // rather than asking to be taken on trust.
+    tr.cells[0].innerHTML = '<span class="site-n"></span>'
+      + '<em class="site-ch"></em>';
+    tr.querySelector('.site-n').textContent = g.name;
+    tr.querySelector('.site-ch').textContent = g.channels.length > 6
+      ? g.channels.length + ' channels'
+      : g.channels.join(' ');
+    tr.title = g.channels.join(' ');
+    els.keyed.appendChild(tr);
+    return { tr, fill: tr.querySelector('.bar > i'), val: tr.cells[2] };
+  });
+
+  // levels is null until the stream has delivered real band power, and stays
+  // null between runs. An idle row shows a dash, never a resting number.
+  env.onActivity = (levels) => {
+    keyedRows.forEach((r, i) => {
+      if (!levels) {
+        r.fill.style.width = '0%';
+        r.val.textContent = '—';
+        return;
+      }
+      const v = levels[i];
+      r.fill.style.width = (Math.min(1, v) * 100).toFixed(0) + '%';
+      r.val.textContent = v.toFixed(2);
+    });
+  };
+}
+
+
+// ---- scope ----------------------------------------------------------------
+// A rolling strip of measured band power for a spread of motor-area contacts.
+// This is the same array that drives the specimen, drawn as a chart recorder
+// would: newest at the right, oldest scrolling off the left.
+const scope = (() => {
+  const cv = document.getElementById('scope');
+  const ctx = cv.getContext('2d');
+  const SECONDS = 6;                  // sweep length, as a recorder's paper
+  let names = [];
+  let ring = [];
+  let head = 0;
+  let filled = 0;
+  let keep = 960;
+  let sfreq = 160;
+  // One gain for every channel, as an EEG viewer has a single µV/div setting.
+  // Scaling each lane to its own peak instead makes every trace fill its lane
+  // identically, which hides the real amplitude differences between sites and
+  // is why nine distinct channels can look like one repeated nine times.
+  let gain = 60;
+
+  function init(trace) {
+    names = trace.channels;
+    sfreq = trace.sfreq || 160;
+    keep = Math.max(64, Math.round(sfreq * SECONDS));
+    ring = names.map(() => new Float32Array(keep));
+    gain = 60;
+    head = 0; filled = 0;
+    resize();
+  }
+
+  /** One step's worth of real samples, per channel. */
+  function push(block) {
+    if (!ring.length || !block) return;
+    const n = block[0].length;
+    let peak = 0;
+    for (let r = 0; r < ring.length && r < block.length; r++) {
+      const row = block[r];
+      const buf = ring[r];
+      for (let k = 0; k < n; k++) {
+        buf[(head + k) % keep] = row[k];
+        const a = Math.abs(row[k]);
+        if (a > peak) peak = a;
+      }
+    }
+    // One follower over every channel, moved slowly: per-block normalisation
+    // would make the whole block jump on each step, which is what turns real
+    // signal into something that looks synthetic.
+    gain = Math.max(20, gain * 0.94 + peak * 1.15 * 0.06);
+    head = (head + n) % keep;
+    filled = Math.min(keep, filled + n);
+    draw();
+  }
+
+  function resize() {
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    const w = cv.clientWidth || 900;
+    const h = cv.clientHeight || 150;
+    cv.width = Math.round(w * dpr);
+    cv.height = Math.round(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw();
+  }
+
+  function draw() {
+    const w = cv.clientWidth || 900;
+    const h = cv.clientHeight || 150;
+    ctx.clearRect(0, 0, w, h);
+    if (!ring.length) return;
+
+    const gutter = 44;
+    const rows = ring.length;
+    const band = h / rows;
+    const css = getComputedStyle(document.documentElement);
+    const line = css.getPropertyValue('--line').trim() || '#1d222a';
+    const dim = css.getPropertyValue('--fg-3').trim() || '#5f6873';
+    const ink = css.getPropertyValue('--accent').trim() || '#56b6cd';
+
+    ctx.font = '9px ui-monospace, monospace';
+    ctx.textBaseline = 'middle';
+
+    for (let r = 0; r < rows; r++) {
+      const y0 = r * band;
+      ctx.strokeStyle = line;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, Math.round(y0) + 0.5);
+      ctx.lineTo(w, Math.round(y0) + 0.5);
+      ctx.stroke();
+
+      ctx.fillStyle = dim;
+      ctx.fillText(names[r], 8, y0 + band / 2);
+
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = 0.9;
+      ctx.beginPath();
+      const buf = ring[r];
+      const span = w - gutter;
+      const mid = y0 + band / 2;
+      const amp = (band - 6) / 2;
+      const px = amp / gain;              // pixels per microvolt, shared
+      // One vertical pixel column per sample would be wasteful and illegible;
+      // step so the sweep is drawn at roughly screen resolution.
+      const stride = Math.max(1, Math.floor(keep / Math.max(1, span)));
+      for (let k = 0; k < filled; k += stride) {
+        // Anchored to the right edge: a recorder writes at the pen and pushes
+        // history leftward, so the newest sample must not drift.
+        const idx = (head - filled + k + keep * 2) % keep;
+        const x = gutter + span - (span * (filled - 1 - k)) / Math.max(1, keep - 1);
+        const y = Math.max(y0 + 2, Math.min(y0 + band - 2, mid - buf[idx] * px));
+        if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+
+    ctx.strokeStyle = line;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(gutter + 0.5, 0);
+    ctx.lineTo(gutter + 0.5, h);
+    ctx.stroke();
+
+    // State the gain, since a trace without one is not a measurement.
+    document.getElementById('scope-note').textContent =
+      names.length + ' ch · ' + sfreq.toFixed(0) + ' Hz · '
+      + SECONDS + ' s · ±' + gain.toFixed(0) + ' µV';
+  }
+
+  addEventListener('resize', resize, { passive: true });
+  return {
+    init, push, resize,
+    reset() { ring.forEach((b) => b.fill(0)); head = 0; filled = 0; draw(); },
+  };
+})();
+
+// ---- file picking ---------------------------------------------------------
+function showFile(f) {
+  if (!f) { els.filename.textContent = ''; els.start.disabled = true; return; }
+  els.filename.textContent = f.name + '  (' + (f.size / 1048576).toFixed(1) + ' MB)';
+  // Choosing a file mid-run must not re-arm Start: a second stream would feed
+  // the same counters and log as the first. Start comes back when the run ends.
+  els.start.disabled = controller !== null;
+}
+els.file.addEventListener('change', () => showFile(els.file.files[0]));
+['dragenter', 'dragover'].forEach((e) =>
+  els.zone.addEventListener(e, (ev) => { ev.preventDefault(); els.zone.classList.add('hot'); }));
+['dragleave', 'drop'].forEach((e) =>
+  els.zone.addEventListener(e, (ev) => { ev.preventDefault(); els.zone.classList.remove('hot'); }));
+els.zone.addEventListener('drop', (ev) => {
+  if (ev.dataTransfer.files.length) { els.file.files = ev.dataTransfer.files; showFile(els.file.files[0]); }
+});
+
+// ---- posterior ------------------------------------------------------------
+function buildBars(classes, threshold) {
+  els.bars.innerHTML = '';
+  classes.forEach((c) => {
+    const d = document.createElement('div');
+    d.className = 'meter';
+    d.innerHTML = '<div class="meter-head"><span class="n"></span>'
+      + '<span class="v">0.00</span></div>'
+      + '<div class="meter-track"><div class="meter-fill"></div>'
+      + '<div class="meter-mark"></div></div>';
+    // Class names arrive from the model card. They are set as text and as
+    // attribute values, never spliced into markup, so a quote in a name cannot
+    // break out of an attribute.
+    d.querySelector('.n').textContent = c;
+    d.querySelector('.v').dataset.for = c;
+    d.querySelector('.meter-fill').dataset.bar = c;
+    d.querySelector('.meter-mark').style.left = (threshold * 100) + '%';
+    els.bars.appendChild(d);
+  });
+}
+
+function setNum(id, v) { document.getElementById(id).textContent = v; }
+
+// What is reported here is measured, not inferred. The contralateral rule --
+// imagining one hand suppresses the rhythm over the opposite hemisphere -- is
+// sound physiology, but applying it to a label would state a fact about this
+// trial that this trial's data was never asked about. So the row shows which
+// electrode group actually sat lower, whichever it turns out to be, on the
+// axis the loaded task varies: left against right for a hand task, lateral
+// against midline for fists versus feet.
+function showDecision(label, measured) {
+  // The headline is the target the subject was responding to, since that is
+  // the thing the recording was made to distinguish; the movement it implies
+  // follows it.
+  const pos = CUE_POSITIONS[label];
+  els.ovText.textContent = pos
+    ? (CUE_ARROW[pos] || '') + ' ' + pos + '  ·  ' + label
+    : label;
+  els.ovText.classList.remove('pop');
+  void els.ovText.offsetWidth;
+  els.ovText.classList.add('pop');
+  setNum('ld-class', label);
+  setNum('ld-cue', cueText(label));
+  // Every axis the task varies is reported, not just the one the specimen
+  // happened to light: a four-class task separates on two of them, and showing
+  // one would quietly drop half of what was measured.
+  let site = '—';
+  if (measured && measured.axes) {
+    site = measured.axes.map((x) => (
+      x.decided
+        ? x.lowerName + ' ' + x.lowerLevel.toFixed(2) + '/' + x.otherLevel.toFixed(2)
+        : x.aName.replace(' sites', '') + '–' + x.bName.replace(' sites', '')
+          + ' level'
+    )).join('   ');
+  }
+  setNum('ld-site', site);
+  setNum('pv-command', pos ? (CUE_ARROW[pos] || '') + ' ' + pos : label);
+  pulse('command');
+}
+
+function addLogRow(d, at) {
+  if (state.decisions + state.timeouts === 1) els.log.innerHTML = '';
+  const tr = document.createElement('tr');
+  tr.className = 'new';
+  const cells = [
+    state.decisions + state.timeouts,
+    at.toFixed(1) + 's',
+    d.label === null ? 'timed out' : d.label,
+    d.confidence.toFixed(2),
+    d.n_windows,
+  ];
+  cells.forEach((v, i) => {
+    const td = document.createElement('td');
+    if (i !== 2) td.className = 'num';
+    td.textContent = v;
+    tr.appendChild(td);
+  });
+  els.log.insertBefore(tr, els.log.firstChild);
+  while (els.log.rows.length > 60) els.log.deleteRow(els.log.rows.length - 1);
+}
+
+// Light a stage of the signal path as data passes through it.
+const pathSteps = {};
+document.querySelectorAll('.path-step').forEach((li) => {
+  pathSteps[li.dataset.step] = li;
+});
+function pulse(step) {
+  const li = pathSteps[step];
+  if (!li) return;
+  li.classList.remove('is-on');
+  void li.offsetWidth;
+  li.classList.add('is-on');
+}
+
+// ---- stream ---------------------------------------------------------------
+function handle(msg) {
+  if (msg.type === 'start') {
+    buildBars(msg.classes, parseFloat(document.getElementById('threshold').value));
+    // The axis the specimen reports on follows the loaded task's classes, not
+    // an assumption baked into the page.
+    CUE_POSITIONS = msg.cue_positions || {};
+    if (scene) {
+      document.getElementById('ph-axis').textContent =
+        scene.setContrast(msg.classes).label;
+    }
+    if (msg.trace) scope.init(msg.trace);
+    showState('decoding', true);
+    return;
+  }
+  if (msg.type === 'error') { fail(msg.message); return; }
+  if (msg.type === 'truncated') { els.status.textContent = msg.message; return; }
+  if (msg.type === 'end') {
+    els.status.textContent = msg.n_windows + ' windows decoded';
+    showState('finished', false);
+    finish();
+    return;
+  }
+
+  if (scene && msg.band_power) scene.update(msg.band_power);
+  if (scene) scene.posterior(msg.posterior);
+  if (msg.raw) scope.push(msg.raw.samples);
+
+  Object.keys(msg.posterior).forEach((c) => {
+    const p = msg.posterior[c];
+    const bar = els.bars.querySelector('[data-bar="' + CSS.escape(c) + '"]');
+    const val = els.bars.querySelector('[data-for="' + CSS.escape(c) + '"]');
+    if (bar) bar.style.width = (p * 100).toFixed(1) + '%';
+    if (val) val.textContent = p.toFixed(2);
+  });
+
+  els.ovTime.textContent = msg.onset_seconds.toFixed(1) + ' s';
+  state.sinceDecision += 1;
+  setNum('m-windows', state.sinceDecision);
+
+  // Walk the path: every window passes stages 1-5, and only some reach 6.
+  ['scalp', 'band', 'spatial'].forEach(pulse);
+  if (msg.probabilities) {
+    const best = Object.keys(msg.probabilities)
+      .reduce((a, b) => (msg.probabilities[a] >= msg.probabilities[b] ? a : b));
+    setNum('pv-classify', best + ' ' + msg.probabilities[best].toFixed(2));
+    pulse('classify');
+  }
+  const lead = Math.max(...Object.values(msg.posterior));
+  setNum('pv-accum', state.sinceDecision + ' win · ' + lead.toFixed(2));
+  pulse('accumulate');
+
+  if (msg.decision) {
+    state.sinceDecision = 0;
+    if (msg.decision.timed_out) state.timeouts += 1;
+    else {
+      state.decisions += 1;
+      state.windowSum += msg.decision.n_windows;
+      const measured = scene ? scene.commit(msg.decision) : null;
+      showDecision(msg.decision.label, measured);
+    }
+    setNum('m-decisions', state.decisions);
+    setNum('m-timeouts', state.timeouts);
+    setNum('m-mean', state.decisions ? (state.windowSum / state.decisions).toFixed(1) : '—');
+    setNum('m-windows', 0);
+    addLogRow(msg.decision, msg.onset_seconds);
+  }
+}
+
+/** The instrument's State readout and the viewport tag, which always agree. */
+function showState(text, live) {
+  [els.ovStatus, els.ovTag].forEach((el) => {
+    el.textContent = text;
+    el.classList.toggle('is-live', live);
+  });
+}
+
+function fail(message) {
+  els.status.textContent = message;
+  els.status.classList.add('is-bad');
+  showState('error', false);
+}
+
+/**
+ * End a run and release the controls. `owner` is the run's own controller: a
+ * run that was stopped and replaced settles late, and must not release the
+ * controls of the run that replaced it.
+ */
+function finish(owner) {
+  if (owner !== undefined && owner !== controller) return;
+  els.start.disabled = !els.file.files.length;
+  els.stop.disabled = true;
+  controller = null;
+}
+
+els.stop.addEventListener('click', () => {
+  if (controller) controller.abort();
+  els.status.textContent = 'stopped';
+  showState('stopped', false);
+  finish();
+});
+
+els.form.addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  if (!els.file.files.length || controller) return;
+
+  state = { decisions: 0, timeouts: 0, windowSum: 0, sinceDecision: 0 };
+  ['m-decisions', 'm-windows', 'm-timeouts'].forEach((i) => setNum(i, 0));
+  setNum('m-mean', '—');
+  setNum('ld-class', '—');
+  setNum('ld-cue', '—');
+  setNum('ld-site', '—');
+  ['pv-classify', 'pv-accum', 'pv-command'].forEach((i) => setNum(i, '—'));
+  els.log.innerHTML = '<tr><td colspan="5" class="empty">none yet</td></tr>';
+  els.ovText.textContent = '';
+  els.status.classList.remove('is-bad');
+  els.status.textContent = 'decoding…';
+  els.start.disabled = true;
+  els.stop.disabled = false;
+  if (scene) scene.reset();
+  scope.reset();
+
+  const body = new FormData();
+  body.append('file', els.file.files[0]);
+  const qs = new URLSearchParams({
+    speed: document.getElementById('speed').value,
+    step: document.getElementById('step').value,
+    threshold: document.getElementById('threshold').value,
+    band_power: '1',
+    raw: '1',
+  });
+
+  const run = new AbortController();
+  controller = run;
+  fetch('/api/v1/stream?' + qs.toString(), {
+    method: 'POST', body, signal: run.signal,
+  }).then((response) => {
+    if (!response.ok) {
+      // A refusal (bad file, too large, server busy) is one JSON document, not
+      // a stream. Fed to the frame parser it would be dropped as a bad frame
+      // and the page would say "decoding…" forever.
+      return response.json().catch(() => ({})).then((refusal) => {
+        if (controller !== run) return;
+        fail(refusal.message
+          || 'the server refused the request (HTTP ' + response.status + ')');
+        finish(run);
+      });
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    function pump() {
+      return reader.read().then((chunk) => {
+        if (controller !== run) return;
+        if (chunk.done) {
+          // A stream cut off before its end frame must not keep claiming to
+          // be decoding.
+          if (els.ovStatus.textContent === 'decoding') {
+            showState('ended', false);
+            if (!els.status.classList.contains('is-bad')) {
+              els.status.textContent = 'the stream ended before it finished';
+            }
+          }
+          finish(run);
+          return;
+        }
+        buffer += decoder.decode(chunk.value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+        lines.forEach((line) => {
+          if (!line.trim() || controller !== run) return;
+          try { handle(JSON.parse(line)); } catch (e) { /* malformed frame */ }
+        });
+        return pump();
+      });
+    }
+    return pump();
+  }).catch((err) => {
+    if (controller !== run) return;
+    if (err.name !== 'AbortError') fail('connection failed');
+    finish(run);
+  });
+});
+</script>
+{% endblock %}
